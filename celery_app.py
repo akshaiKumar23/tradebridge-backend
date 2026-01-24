@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Redis as broker and backend
+
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 celery_app = Celery(
@@ -13,7 +13,7 @@ celery_app = Celery(
     backend=REDIS_URL
 )
 
-# Celery Configuration
+
 celery_app.conf.update(
     task_serializer='json',
     accept_content=['json'],
@@ -21,16 +21,14 @@ celery_app.conf.update(
     timezone='UTC',
     enable_utc=True,
     task_track_started=True,
-    task_time_limit=30,  # 30 seconds max
+    task_time_limit=30,  
     task_soft_time_limit=25,
-    worker_prefetch_multiplier=1,  # Process one task at a time
-    worker_max_tasks_per_child=50,  # Restart worker after 50 tasks (prevents memory leaks)
+    worker_prefetch_multiplier=1,
+    worker_max_tasks_per_child=50,  
 )
 
 
-# ============================================================================
-# FILE: tasks.py
-# ============================================================================
+
 import MetaTrader5 as mt5
 from datetime import datetime, timedelta
 from celery_app import celery_app
@@ -38,18 +36,16 @@ from celery_app import celery_app
 
 @celery_app.task(name="tasks.get_account_summary", bind=True)
 def get_account_summary(self, server: str, login: int, password: str):
-    """
-    Celery task to fetch MT5 account summary
-    """
+
     try:
-        # Initialize MT5
+        
         if not mt5.initialize():
             return {
                 "status": "error",
                 "message": f"MT5 initialize failed: {mt5.last_error()}"
             }
 
-        # Login
+       
         if not mt5.login(login=login, password=password, server=server):
             mt5.shutdown()
             return {
@@ -59,7 +55,7 @@ def get_account_summary(self, server: str, login: int, password: str):
 
         response = {"status": "success", "data": {}}
 
-        # Account Info
+   
         account = mt5.account_info()
         if account is None:
             mt5.shutdown()
@@ -82,7 +78,7 @@ def get_account_summary(self, server: str, login: int, password: str):
             "margin_level": (account.equity / account.margin) * 100 if account.margin > 0 else None,
         }
 
-        # Open Positions
+       
         positions_data = []
         positions = mt5.positions_get()
         if positions:
@@ -103,7 +99,7 @@ def get_account_summary(self, server: str, login: int, password: str):
 
         response["data"]["open_positions"] = positions_data
 
-        # Pending Orders
+      
         orders_data = []
         orders = mt5.orders_get()
         if orders:
@@ -120,7 +116,7 @@ def get_account_summary(self, server: str, login: int, password: str):
 
         response["data"]["pending_orders"] = orders_data
 
-        # Recent Trades (7 days)
+        
         date_from = datetime.now() - timedelta(days=7)
         date_to = datetime.now()
 
@@ -128,7 +124,7 @@ def get_account_summary(self, server: str, login: int, password: str):
         deals = mt5.history_deals_get(date_from, date_to)
         if deals:
             for deal in deals:
-                if deal.type in (0, 1):  # BUY / SELL
+                if deal.type in (0, 1): 
                     trades_data.append({
                         "time": datetime.fromtimestamp(deal.time).isoformat(),
                         "symbol": deal.symbol,
@@ -148,5 +144,5 @@ def get_account_summary(self, server: str, login: int, password: str):
             "message": str(e)
         }
     finally:
-        # Always shutdown MT5 connection
+      
         mt5.shutdown()
