@@ -2,3 +2,6 @@ fastapi
 uvicorn
 MetaTrader5
 python-dotenv
+celery
+redis
+pydantic
