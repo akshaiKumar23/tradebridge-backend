@@ -1,114 +1,69 @@
 from fastapi import FastAPI, HTTPException
-import MetaTrader5 as mt5
-from datetime import datetime, timedelta
+from pydantic import BaseModel
+from celery.result import AsyncResult
+from tasks import get_account_summary
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
-SERVER = os.getenv("MT5_SERVER", "")
-LOGIN = int(os.getenv("MT5_LOGIN", "60906"))
-PASSWORD = os.getenv("MT5_PASSWORD", "")
-
-app = FastAPI(title="MT5 Account API")
+app = FastAPI(title="MT5 Account API with Celery")
 
 
-@app.get("/account/summary")
-def account_summary():
-    # Initialize MT5
-    if not mt5.initialize():
-        raise HTTPException(
-            status_code=500,
-            detail=f"MT5 initialize failed: {mt5.last_error()}"
-        )
+class AccountRequest(BaseModel):
+    server: str
+    login: int
+    password: str
 
-    # Login
-    if not mt5.login(login=LOGIN, password=PASSWORD, server=SERVER):
-        mt5.shutdown()
-        raise HTTPException(
-            status_code=401,
-            detail=f"MT5 login failed: {mt5.last_error()}"
-        )
 
-    response = {}
+@app.post("/account/summary")
+def request_account_summary(request: AccountRequest):
 
-    # Account Info
-    account = mt5.account_info()
-    if account is None:
-        mt5.shutdown()
-        raise HTTPException(status_code=500, detail="Unable to fetch account info")
-
-    response["account"] = {
-        "login": account.login,
-        "name": account.name,
-        "server": account.server,
-        "currency": account.currency,
-        "leverage": account.leverage,
-        "balance": account.balance,
-        "equity": account.equity,
-        "profit": account.profit,
-        "margin": account.margin,
-        "margin_free": account.margin_free,
-        "margin_level": (account.equity / account.margin) * 100 if account.margin > 0 else None,
+    task = get_account_summary.apply_async(
+        args=[request.server, request.login, request.password]
+    )
+    
+    return {
+        "task_id": task.id,
+        "status": "processing",
+        "message": "Task submitted. Use /account/summary/{task_id} to check status"
     }
 
-    # Open Positions
-    positions_data = []
-    positions = mt5.positions_get()
-    if positions:
-        for pos in positions:
-            positions_data.append({
-                "ticket": pos.ticket,
-                "symbol": pos.symbol,
-                "type": "BUY" if pos.type == 0 else "SELL",
-                "volume": pos.volume,
-                "price_open": pos.price_open,
-                "price_current": pos.price_current,
-                "profit": pos.profit,
-                "swap": pos.swap,
-                "sl": pos.sl,
-                "tp": pos.tp,
-                "opened_at": datetime.fromtimestamp(pos.time),
-            })
 
-    response["open_positions"] = positions_data
+@app.get("/account/summary/{task_id}")
+def get_task_result(task_id: str):
 
-    # Pending Orders
-    orders_data = []
-    orders = mt5.orders_get()
-    if orders:
-        for order in orders:
-            orders_data.append({
-                "ticket": order.ticket,
-                "symbol": order.symbol,
-                "type": order.type,
-                "volume": order.volume_current,
-                "price": order.price_open,
-                "sl": order.sl,
-                "tp": order.tp,
-            })
+    task_result = AsyncResult(task_id, app=get_account_summary.app)
+    
+    if task_result.ready():
+        result = task_result.get()
+        
+        if result.get("status") == "error":
+            raise HTTPException(status_code=500, detail=result.get("message"))
+        
+        return result
+    
+    elif task_result.failed():
+        raise HTTPException(
+            status_code=500,
+            detail=f"Task failed: {str(task_result.info)}"
+        )
+    
+    else:
+        return {
+            "task_id": task_id,
+            "status": "processing",
+            "message": "Task is still being processed"
+        }
 
-    response["pending_orders"] = orders_data
 
-    # Recent Trades (7 days)
-    date_from = datetime.now() - timedelta(days=7)
-    date_to = datetime.now()
-
-    trades_data = []
-    deals = mt5.history_deals_get(date_from, date_to)
-    if deals:
-        for deal in deals:
-            if deal.type in (0, 1):  # BUY / SELL
-                trades_data.append({
-                    "time": datetime.fromtimestamp(deal.time),
-                    "symbol": deal.symbol,
-                    "type": "BUY" if deal.type == 0 else "SELL",
-                    "volume": deal.volume,
-                    "price": deal.price,
-                    "profit": deal.profit,
-                })
-
-    response["recent_trades"] = trades_data[-5:]
-
-    mt5.shutdown()
-    return response
+@app.get("/account/summary/{task_id}/status")
+def get_task_status(task_id: str):
+ 
+    task_result = AsyncResult(task_id, app=get_account_summary.app)
+    
+    return {
+        "task_id": task_id,
+        "status": task_result.state,
+        "ready": task_result.ready()
+    }
