@@ -91,19 +91,27 @@ def get_account_summary(self, server: str, login: int, password: str):
 
         trades_data = []
         deals = mt5.history_deals_get(date_from, date_to)
+
+        trades_data = []
         if deals:
             for deal in deals:
-                if deal.type in (0, 1):  # BUY / SELL
+                
+                if deal.entry == mt5.DEAL_ENTRY_OUT or deal.entry == mt5.DEAL_ENTRY_INOUT:
                     trades_data.append({
+                        "ticket": deal.ticket,
+                        "order": deal.order,
                         "time": datetime.fromtimestamp(deal.time).isoformat(),
                         "symbol": deal.symbol,
-                        "type": "BUY" if deal.type == 0 else "SELL",
+                        "type": "BUY" if deal.type == mt5.DEAL_TYPE_BUY else "SELL",
                         "volume": deal.volume,
                         "price": deal.price,
                         "profit": deal.profit,
+                        "swap": deal.swap,
+                        "commission": deal.commission,
                     })
 
         response["data"]["recent_trades"] = trades_data[-5:]
+
 
         return response
 
