@@ -66,7 +66,7 @@ def fetch_mt5_analytics(server, login, password):
                     trades_list.append({
                         "ticket": int(deal.ticket),
                         "symbol": str(deal.symbol),
-                        "net_profit": str(round(trade_net, 2))
+                        "pnl": str(round(trade_net, 2))
                     })
 
         # 4. Final Aggregation
@@ -85,7 +85,7 @@ def fetch_mt5_analytics(server, login, password):
                 "performance_metrics": metrics,
                 "equity_vs_time": equity_curve,
                 "daily_pnl": [{"date": d, "pnl": str(round(p, 2))} for d, p in sorted(daily_pnl_map.items())],
-                "recent_trades": trades_list
+                "trades": trades_list
             }
         }
     finally:

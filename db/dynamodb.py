@@ -13,5 +13,13 @@ def get_strategies_table():
 
 
 def get_journals_table():
-    dynamodb = boto3.resource("dynamodb")
+    dynamodb = get_dynamodb()
     return dynamodb.Table("DailyJournals")
+
+def get_performance_snapshots_table():
+    dynamodb = get_dynamodb()
+    return dynamodb.Table("UserPerformanceSnapshots")
+
+def get_onboarding_table():
+    dynamodb = get_dynamodb()
+    return dynamodb.Table("UserOnboarding")

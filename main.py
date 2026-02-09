@@ -12,7 +12,7 @@ from decimal import Decimal
 
 from auth_dependency import get_current_user, verify_token_only
 from schemas.strategies import StrategyCreateRequest
-
+from db.dynamodb import get_performance_snapshots_table
 
 from tasks import get_account_summary
 
@@ -20,6 +20,8 @@ from db.dynamodb import get_strategies_table
 from db.dynamodb import get_journals_table
 from schemas.journal import JournalCreateRequest
 from boto3.dynamodb.conditions import Key
+from db.dynamodb import get_onboarding_table
+from schemas.broker_link import BrokerLinkRequest
 
 
 load_dotenv()
@@ -42,6 +44,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+class BrokerSelectRequest(BaseModel):
+    broker: str
 
 @app.middleware("http")
 async def log_body(request: Request, call_next):
@@ -82,15 +86,18 @@ async def request_account_summary(
     request: AccountRequest,
     current_user: dict = Depends(get_current_user)
 ):
-    
     task = get_account_summary.apply_async(
-        args=[request.server, request.login, request.password]
+        args=[
+            current_user["user_id"],
+            request.server,
+            request.login,
+            request.password
+        ]
     )
+
     return {
         "task_id": task.id,
-        "status": "processing",
-        "message": "MT5 analytics task submitted.",
-        "user": current_user['username']
+        "status": "processing"
     }
 
 
@@ -101,6 +108,12 @@ async def get_task_result(
 ):
     
     task_result = AsyncResult(task_id, app=get_account_summary.app)
+
+    if task_result.state == "PROGRESS":
+        return {
+            "status": "progress",
+            "step": task_result.info.get("step")
+        }
 
     if task_result.ready():
         result = task_result.get()
@@ -114,6 +127,68 @@ async def get_task_result(
         "message": "Task is still in progress."
     }
 
+
+@app.get("/reports/summary")
+async def get_reports_summary(
+    current_user: dict = Depends(get_current_user)
+):
+    table = get_performance_snapshots_table()
+    user_id = current_user["user_id"]
+
+    response = table.query(
+        KeyConditionExpression=Key("user_id").eq(user_id),
+        ScanIndexForward=False,
+        Limit=1
+    )
+
+    if not response.get("Items"):
+        return {}
+
+    snapshot = response["Items"][0]
+    symbols = snapshot.get("symbols", {})
+
+    if not symbols:
+        return {
+            "best_performing_symbol": None,
+            "worst_performing_symbol": None,
+            "most_active_symbol": None,
+            "best_win_rate_symbol": None,
+        }
+
+    best = max(symbols.items(), key=lambda x: x[1].get("pnl", 0))
+    worst = min(symbols.items(), key=lambda x: x[1].get("pnl", 0))
+    active = max(symbols.items(), key=lambda x: x[1].get("trades", 0))
+    win_rate = max(
+        symbols.items(),
+        key=lambda x: (
+            x[1]["wins"] / x[1]["trades"]
+            if x[1].get("trades", 0) > 0 else 0
+        )
+    )
+
+    return {
+        "best_performing_symbol": {
+            "symbol": best[0],
+            "pnl": float(best[1].get("pnl", 0)),
+            "trades": int(best[1].get("trades", 0)),
+        },
+        "worst_performing_symbol": {
+            "symbol": worst[0],
+            "pnl": float(worst[1].get("pnl", 0)),
+            "trades": int(worst[1].get("trades", 0)),
+        },
+        "most_active_symbol": {
+            "symbol": active[0],
+            "trades": int(active[1].get("trades", 0)),
+        },
+        "best_win_rate_symbol": {
+            "symbol": win_rate[0],
+            "win_rate": round(
+                (win_rate[1]["wins"] / win_rate[1]["trades"]) * 100, 2
+            ),
+            "trades": int(win_rate[1]["trades"]),
+        },
+    }
 
 
 
@@ -238,7 +313,7 @@ async def get_my_journals(
     try:
         response = table.query(
             KeyConditionExpression=Key("user_id").eq(user_id),
-            ScanIndexForward=False  # latest first
+            ScanIndexForward=False
         )
 
         return {
@@ -251,3 +326,138 @@ async def get_my_journals(
             status_code=500,
             detail=f"Failed to fetch journals: {str(e)}"
         )
+
+
+@app.get("/reports/last-sync")
+async def get_last_sync(current_user: dict = Depends(get_current_user)):
+    table = get_performance_snapshots_table()
+    user_id = current_user["user_id"]
+
+    response = table.query(
+        KeyConditionExpression=Key("user_id").eq(user_id),
+        ScanIndexForward=False,
+        Limit=1
+    )
+
+    if not response.get("Items"):
+        return {
+            "last_synced_at": None,
+            "needs_sync": True
+        }
+
+    last = response["Items"][0]["created_at"]
+    last_dt = datetime.fromisoformat(last)
+
+    needs_sync = (datetime.utcnow() - last_dt).total_seconds() > 86400
+
+    return {
+        "last_synced_at": last,
+        "needs_sync": needs_sync
+    }
+
+
+
+
+
+@app.get("/onboarding/status")
+async def get_onboarding_status(
+    current_user: dict = Depends(get_current_user)
+):
+    table = get_onboarding_table()
+    user_id = current_user["user_id"]
+
+    response = table.get_item(
+        Key={"user_id": user_id}
+    )
+
+    if "Item" not in response:
+        snapshots_table = get_performance_snapshots_table()
+        snapshot_response = snapshots_table.query(
+            KeyConditionExpression=Key("user_id").eq(user_id),
+            Limit=1
+        )
+        
+        has_snapshots = len(snapshot_response.get("Items", [])) > 0
+        
+      
+        table.put_item(
+            Item={
+                "user_id": user_id,
+                "broker_linked": has_snapshots, 
+                "broker_name": None,
+                "created_at": datetime.utcnow().isoformat(),
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+        )
+
+        return {
+            "brokerLinked": has_snapshots,
+            "broker": None,
+        }
+
+    item = response["Item"]
+
+    return {
+        "brokerLinked": item.get("broker_linked", False),
+        "broker": item.get("broker_name"),
+    }
+
+@app.post("/onboarding/select-broker")
+async def select_broker(
+    request: BrokerSelectRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    table = get_onboarding_table()
+    user_id = current_user["user_id"]
+
+    table.update_item(
+        Key={"user_id": user_id},
+        UpdateExpression="""
+            SET broker_name = :broker,
+                broker_linked = :linked,
+                updated_at = :updated
+        """,
+        ExpressionAttributeValues={
+            ":broker": request.broker,
+            ":linked": False,
+            ":updated": datetime.utcnow().isoformat(),
+        },
+    )
+
+    return {"status": "success"}
+
+
+@app.post("/onboarding/link-broker")
+async def link_broker(
+    request: BrokerLinkRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    user_id = current_user["user_id"]
+
+    task = get_account_summary.apply_async(
+        args=[
+            user_id,
+            request.server,
+            request.login,
+            request.password
+        ]
+    )
+
+    onboarding_table = get_onboarding_table()
+    
+   
+    onboarding_table.put_item(
+        Item={
+            "user_id": user_id,
+            "broker_name": request.broker,
+            "broker_linked": False,
+            "sync_task_id": task.id,
+            "created_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.utcnow().isoformat(),
+        }
+    )
+
+    return {
+        "status": "syncing",
+        "task_id": task.id
+    }
