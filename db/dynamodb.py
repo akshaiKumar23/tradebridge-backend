@@ -36,3 +36,8 @@ def get_pnl_weekly_table():
     dynamodb = get_dynamodb()
     return dynamodb.Table("UserPnLWeekly")
 
+def get_r_multiple_table():
+    dynamodb = get_dynamodb()
+    return dynamodb.Table("UserRMultiples")
+
+

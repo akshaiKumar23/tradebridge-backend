@@ -61,11 +61,15 @@ def normalize_mt5_data(mt5_data: dict):
 
         if close_time:
 
-            hour = datetime.fromtimestamp(
-                close_time
-            ).hour
+            dt = datetime.fromtimestamp(close_time)
 
-            trading_hours[hour] += 1
+            week_start = (
+                dt - timedelta(days=dt.weekday())
+            ).strftime("%Y-%m-%d")
+
+            weekly_pnl[week_start] += pnl
+
+            trading_hours[dt.hour] += 1
 
         if pnl > 0:
 
@@ -194,4 +198,5 @@ def normalize_mt5_data(mt5_data: dict):
             round(avg_volume, 2),
 
         "symbols": dict(symbols),
+        "weekly_pnl":dict(weekly_pnl),
     }

@@ -6,6 +6,9 @@ from services.performance_store import save_user_performance_snapshot
 from services.analytics_store import save_user_analytics_stats
 from db.dynamodb import get_onboarding_table
 from services.equity_store import save_equity_curve
+from services.pnl_weekly_store import save_weekly_pnl
+from services.r_multiple_store import save_r_multiples
+
 
 
 
@@ -52,6 +55,29 @@ def get_account_summary(self, user_id, server, login, password):
         user_id=user_id,
         equity_curve=result["data"]["equity_vs_time"]
     )
+
+    self.update_state(
+        state="PROGRESS",
+        meta={"step": "saving_weekly_pnl"}
+    )
+
+    weekly_pnl = normalized.get("weekly_pnl", {})
+
+    if weekly_pnl:
+
+        save_weekly_pnl(
+            user_id=user_id,
+            weekly_pnl=weekly_pnl
+        )
+
+    self.update_state(state="PROGRESS", meta={"step": "saving_r_multiples"})
+
+    save_r_multiples(
+    user_id=user_id,
+    trades=result["data"]["trades"]
+    )
+
+
 
 
 

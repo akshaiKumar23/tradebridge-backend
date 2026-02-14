@@ -144,6 +144,11 @@ def fetch_mt5_analytics(server, login, password):
                         wins.append(trade_net)
                     else:
                         losses.append(abs(trade_net))
+                    
+                    risk_amount = abs(entry.price_open - entry.sl) * entry.volume \
+                        if entry.sl else abs(trade_net)
+
+                    r_multiple = trade_net / risk_amount if risk_amount > 0 else 0
 
                     trades_list.append({
 
@@ -164,6 +169,10 @@ def fetch_mt5_analytics(server, login, password):
                             hold_time_minutes,
 
                         "volume": float(deal.volume),
+                        "r_multiple": r_multiple,
+                        "risk_amount": risk_amount,
+                        "timestamp": close_time,
+                        "trade_id": int(deal.position_id)
                     })
 
         total_t = len(wins) + len(losses)
