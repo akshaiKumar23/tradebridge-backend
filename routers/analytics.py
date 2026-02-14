@@ -3,7 +3,11 @@ from boto3.dynamodb.conditions import Key
 from decimal import Decimal
 
 from auth_dependency import get_current_user
-from db.dynamodb import get_analytics_stats_table
+from db.dynamodb import (
+    get_analytics_stats_table,
+    get_equity_curve_table
+)
+
 
 
 router = APIRouter(
@@ -112,6 +116,29 @@ async def get_analytics_page(
             ),
     }
 
+    equity_table = get_equity_curve_table()
+
+    equity_response = equity_table.query(
+
+        KeyConditionExpression=
+            Key("user_id").eq(user_id),
+
+        ScanIndexForward=True
+    )
+
+    equity_items = equity_response.get("Items", [])
+
+    equity_curve = [
+
+        {
+            "timestamp": item["timestamp"],
+            "equity": float(item["equity"])
+        }
+
+        for item in equity_items
+    ]
+
+
     return {
 
         "status": "success",
@@ -120,7 +147,9 @@ async def get_analytics_page(
 
             "stats": stats,
 
-            "behavior": behavior
+            "behavior": behavior,
+
+            "equity_curve": equity_curve
 
         }
     }

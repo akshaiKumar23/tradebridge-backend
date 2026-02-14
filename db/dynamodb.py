@@ -27,3 +27,12 @@ def get_onboarding_table():
 def get_analytics_stats_table():
     dynamodb = get_dynamodb()
     return dynamodb.Table("UserAnalyticsStats")
+
+def get_equity_curve_table():
+    dynamodb = get_dynamodb()
+    return dynamodb.Table("UserEquityCurve")
+
+def get_pnl_weekly_table():
+    dynamodb = get_dynamodb()
+    return dynamodb.Table("UserPnLWeekly")
+

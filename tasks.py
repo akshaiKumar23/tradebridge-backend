@@ -5,6 +5,8 @@ from services.mt5_normalizer import normalize_mt5_data
 from services.performance_store import save_user_performance_snapshot
 from services.analytics_store import save_user_analytics_stats
 from db.dynamodb import get_onboarding_table
+from services.equity_store import save_equity_curve
+
 
 
 @celery_app.task(name="tasks.get_account_summary", bind=True)
@@ -43,6 +45,14 @@ def get_account_summary(self, user_id, server, login, password):
         snapshot_date=snapshot_date,
         data=normalized
     )
+
+    self.update_state(state="PROGRESS", meta={"step": "saving_equity_curve"})
+
+    save_equity_curve(
+        user_id=user_id,
+        equity_curve=result["data"]["equity_vs_time"]
+    )
+
 
 
     self.update_state(state="PROGRESS", meta={"step": "finalizing_onboarding"})
