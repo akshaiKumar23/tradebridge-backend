@@ -13,6 +13,7 @@ from decimal import Decimal
 from auth_dependency import get_current_user, verify_token_only
 from schemas.strategies import StrategyCreateRequest
 from db.dynamodb import get_performance_snapshots_table
+from db.dynamodb import get_analytics_stats_table
 
 from tasks import get_account_summary
 
@@ -22,6 +23,11 @@ from schemas.journal import JournalCreateRequest
 from boto3.dynamodb.conditions import Key
 from db.dynamodb import get_onboarding_table
 from schemas.broker_link import BrokerLinkRequest
+from routers.analytics import router as analytics_router
+
+
+
+
 
 
 load_dotenv()
@@ -43,7 +49,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
+app.include_router(analytics_router)
 class BrokerSelectRequest(BaseModel):
     broker: str
 
@@ -60,7 +66,10 @@ class AccountRequest(BaseModel):
     password: str
 
 
-
+def decimal_to_float(obj):
+    if isinstance(obj, Decimal):
+        return float(obj)
+    return obj
 
 
 @app.get("/health")
@@ -101,12 +110,13 @@ async def request_account_summary(
     }
 
 
+
 @app.get("/account/summary/{task_id}")
 async def get_task_result(
     task_id: str,
     current_user: dict = Depends(get_current_user)
 ):
-    
+
     task_result = AsyncResult(task_id, app=get_account_summary.app)
 
     if task_result.state == "PROGRESS":
@@ -116,17 +126,53 @@ async def get_task_result(
         }
 
     if task_result.ready():
+
         result = task_result.get()
+
         if result.get("status") == "error":
-            raise HTTPException(status_code=500, detail=result.get("message"))
-        return result
+            raise HTTPException(
+                status_code=500,
+                detail=result.get("message")
+            )
+
+        table = get_analytics_stats_table()
+
+        response = table.query(
+            KeyConditionExpression=Key("user_id").eq(current_user["user_id"]),
+            ScanIndexForward=False,
+            Limit=1
+        )
+
+        stats = response.get("Items", [])
+
+        analytics = None
+
+        if stats:
+            item = stats[0]
+
+            analytics = {
+                "total_pnl": decimal_to_float(item["total_pnl"]),
+                "total_trades": decimal_to_float(item["total_trades"]),
+                "wins": decimal_to_float(item["wins"]),
+                "losses": decimal_to_float(item["losses"]),
+                "win_rate": decimal_to_float(item["win_rate"]),
+                "profit_factor": decimal_to_float(item["profit_factor"]),
+                "expectancy": decimal_to_float(item["expectancy"]),
+                "avg_win": decimal_to_float(item["avg_win"]),
+                "avg_loss": decimal_to_float(item["avg_loss"]),
+            }
+
+        return {
+            "status": "success",
+            "sync": result,
+            "analytics_stats": analytics
+        }
 
     return {
         "task_id": task_id,
         "status": task_result.status,
         "message": "Task is still in progress."
     }
-
 
 @app.get("/reports/summary")
 async def get_reports_summary(

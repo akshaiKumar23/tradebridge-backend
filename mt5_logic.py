@@ -3,7 +3,6 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 
 def fetch_mt5_analytics(server, login, password):
-    """Connects to MT5 and calculates all required performance metrics."""
     try:
         if not mt5.initialize():
             return {"status": "error", "message": f"MT5 initialize failed: {mt5.last_error()}"}
@@ -17,7 +16,7 @@ def fetch_mt5_analytics(server, login, password):
             mt5.shutdown()
             return {"status": "error", "message": "Unable to fetch account info"}
 
-        # 1. Process Account Info
+      
         account_data = {
             "login": account.login,
             "balance": str(account.balance),
@@ -27,7 +26,6 @@ def fetch_mt5_analytics(server, login, password):
             "company": getattr(account, "company", "N/A"),
         }
 
-        # 2. Process Open Positions
         positions_data = []
         positions = mt5.positions_get()
         if positions:
@@ -39,7 +37,7 @@ def fetch_mt5_analytics(server, login, password):
                     "opened_at": datetime.fromtimestamp(pos.time).isoformat(),
                 })
 
-        # 3. Process History (Last 30 Days)
+        
         date_from = datetime.now() - timedelta(days=30)
         deals = mt5.history_deals_get(date_from, datetime.now())
         
@@ -66,16 +64,37 @@ def fetch_mt5_analytics(server, login, password):
                     trades_list.append({
                         "ticket": int(deal.ticket),
                         "symbol": str(deal.symbol),
-                        "pnl": str(round(trade_net, 2))
+                        "pnl": str(round(trade_net, 2)),
+                        "open_time": deal.time,  
+                        "close_time": deal.time, 
+                        "volume": float(deal.volume),
                     })
 
-        # 4. Final Aggregation
+        
         total_t = len(wins) + len(losses)
+
+        avg_win = sum(wins)/len(wins) if wins else 0
+        avg_loss = sum(losses)/len(losses) if losses else 0
+
+        expectancy = net_pnl / total_t if total_t > 0 else 0
+
         metrics = {
-            "profit_factor": str(round(sum(wins) / sum(losses), 2)) if losses and sum(losses) > 0 else "0",
-            "win_percentage": f"{round((len(wins)/total_t*100), 2) if total_t > 0 else 0}%",
-            "net_pnl_30d": str(round(net_pnl, 2))
-        }
+            "net_pnl_30d": str(round(net_pnl, 2)),
+
+            "total_trades": total_t,
+            "wins": len(wins),
+            "losses": len(losses),
+
+            "win_percentage": round((len(wins)/total_t*100), 2) if total_t > 0 else 0,
+
+            "profit_factor": round(sum(wins) / sum(losses), 2) if losses else 0,
+
+            "expectancy": round(expectancy, 2),
+
+            "avg_win": round(avg_win, 2),
+            "avg_loss": round(avg_loss, 2),
+            }
+
 
         return {
             "status": "success",
