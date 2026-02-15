@@ -24,6 +24,7 @@ from boto3.dynamodb.conditions import Key
 from db.dynamodb import get_onboarding_table
 from schemas.broker_link import BrokerLinkRequest
 from routers.analytics import router as analytics_router
+from routers.trades_router import router as trades_router
 
 
 
@@ -50,6 +51,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(analytics_router)
+app.include_router(trades_router)
+
 class BrokerSelectRequest(BaseModel):
     broker: str
 

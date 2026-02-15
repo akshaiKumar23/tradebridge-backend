@@ -8,6 +8,8 @@ from db.dynamodb import get_onboarding_table
 from services.equity_store import save_equity_curve
 from services.pnl_weekly_store import save_weekly_pnl
 from services.r_multiple_store import save_r_multiples
+from services.trades_store import save_user_trades
+
 
 
 
@@ -69,6 +71,17 @@ def get_account_summary(self, user_id, server, login, password):
             user_id=user_id,
             weekly_pnl=weekly_pnl
         )
+    
+    self.update_state(
+        state="PROGRESS",
+        meta={"step": "saving_trades"}
+        )
+
+    save_user_trades(
+        user_id=user_id,
+        trades=result["data"]["trades"]
+        )
+
 
     self.update_state(state="PROGRESS", meta={"step": "saving_r_multiples"})
 

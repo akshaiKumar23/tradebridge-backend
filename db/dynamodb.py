@@ -40,4 +40,7 @@ def get_r_multiple_table():
     dynamodb = get_dynamodb()
     return dynamodb.Table("UserRMultiples")
 
+def get_trades_table():
+    dynamodb = get_dynamodb()
+    return dynamodb.Table("UserTrades")
 

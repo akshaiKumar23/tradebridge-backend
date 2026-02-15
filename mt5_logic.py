@@ -111,6 +111,47 @@ def fetch_mt5_analytics(server, login, password):
                         + (deal.commission or 0)
                     )
 
+                    
+                    if trade_net > 0:
+                        wins.append(trade_net)
+                    else:
+                        losses.append(abs(trade_net))
+
+                  
+                    risk_amount = None
+                    position_history = mt5.history_orders_get(position=deal.position_id)
+
+                    if position_history:
+                        for order in position_history:
+                            if hasattr(order, "sl") and order.sl > 0:
+                                risk_amount = abs(
+                                    order.price_open - order.sl
+                                ) * order.volume
+                                break
+
+                    
+                    if not risk_amount or risk_amount == 0:
+                        if losses:
+                            risk_amount = sum(losses) / len(losses)
+                        else:
+                            risk_amount = abs(trade_net)
+
+                    
+                    if risk_amount == 0:
+                        risk_amount = 1
+
+                    
+                    r_multiple = round(trade_net / risk_amount, 2)
+
+                    
+                    if len(trades_list) < 2:
+                        print(f"\n=== DEBUG Trade {len(trades_list) + 1} ===")
+                        print(f"PnL: {trade_net}")
+                        print(f"Risk Amount: {risk_amount}")
+                        print(f"R-Multiple: {r_multiple}")
+                        print(f"Current losses list: {losses}")
+                        print(f"Current wins list: {wins}")
+
                     net_pnl += trade_net
 
                     current_equity += trade_net
@@ -140,16 +181,6 @@ def fetch_mt5_analytics(server, login, password):
                         .strftime('%Y-%m-%d')
                     ] += trade_net
 
-                    if trade_net > 0:
-                        wins.append(trade_net)
-                    else:
-                        losses.append(abs(trade_net))
-                    
-                    risk_amount = abs(entry.price_open - entry.sl) * entry.volume \
-                        if entry.sl else abs(trade_net)
-
-                    r_multiple = trade_net / risk_amount if risk_amount > 0 else 0
-
                     trades_list.append({
 
                         "ticket": int(deal.ticket),
@@ -170,7 +201,7 @@ def fetch_mt5_analytics(server, login, password):
 
                         "volume": float(deal.volume),
                         "r_multiple": r_multiple,
-                        "risk_amount": risk_amount,
+                        "risk_amount": round(risk_amount, 2),
                         "timestamp": close_time,
                         "trade_id": int(deal.position_id)
                     })
@@ -213,6 +244,11 @@ def fetch_mt5_analytics(server, login, password):
             "avg_loss":
                 round(avg_loss, 2),
         }
+
+        
+        print("\n=== FINAL TRADES LIST (first 2) ===")
+        for i, trade in enumerate(trades_list[:2]):
+            print(f"Trade {i+1}: PnL={trade['pnl']}, R={trade['r_multiple']}, Risk={trade['risk_amount']}")
 
         return {
 
