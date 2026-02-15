@@ -20,6 +20,9 @@ def get_account_summary(self, user_id, server, login, password):
     self.update_state(state="PROGRESS", meta={"step": "connecting_to_mt5"})
 
     result = fetch_mt5_analytics(server, login, password)
+    if result["status"] == "success":
+        debug = result["data"].get("debug_info", {})
+        print(f"\n Debug Info: {debug}")
 
     if result["status"] != "success":
         return result
