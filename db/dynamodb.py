@@ -44,3 +44,13 @@ def get_trades_table():
     dynamodb = get_dynamodb()
     return dynamodb.Table("UserTrades")
 
+
+def get_daily_pnl_table():
+    dynamodb = get_dynamodb()
+    return dynamodb.Table("UserDailyPnL")
+
+def get_dashboard_stats_table():
+    dynamodb = get_dynamodb()
+    return dynamodb.Table("UserDashboardStats")
+
+
