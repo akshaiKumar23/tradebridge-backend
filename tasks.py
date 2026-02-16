@@ -1,466 +1,211 @@
-# # # import MetaTrader5 as mt5
-# # # from datetime import datetime, timedelta
-# # # from celery_app import celery_app
-
-
-# # # @celery_app.task(name="tasks.get_account_summary", bind=True)
-# # # def get_account_summary(self, server: str, login: int, password: str):
-
-# # #     try:
-      
-# # #         if not mt5.initialize():
-# # #             return {
-# # #                 "status": "error",
-# # #                 "message": f"MT5 initialize failed: {mt5.last_error()}"
-# # #             }
-
-      
-# # #         if not mt5.login(login=login, password=password, server=server):
-# # #             mt5.shutdown()
-# # #             return {
-# # #                 "status": "error",
-# # #                 "message": f"MT5 login failed: {mt5.last_error()}"
-# # #             }
-
-# # #         response = {"status": "success", "data": {}}
-
-        
-# # #         account = mt5.account_info()
-# # #         if account is None:
-# # #             mt5.shutdown()
-# # #             return {
-# # #                 "status": "error",
-# # #                 "message": "Unable to fetch account info"
-# # #             }
-
-# # #         response["data"]["account"] = {
-# # #             "login": account.login,
-# # #             "name": account.name,
-# # #             "server": account.server,
-# # #             "currency": account.currency,
-# # #             "leverage": account.leverage,
-# # #             "balance": account.balance,
-# # #             "equity": account.equity,
-# # #             "profit": account.profit,
-# # #             "margin": account.margin,
-# # #             "margin_free": account.margin_free,
-# # #             "margin_level": (account.equity / account.margin) * 100 if account.margin > 0 else None,
-# # #         }
-
-        
-# # #         positions_data = []
-# # #         positions = mt5.positions_get()
-# # #         if positions:
-# # #             for pos in positions:
-# # #                 positions_data.append({
-# # #                     "ticket": pos.ticket,
-# # #                     "symbol": pos.symbol,
-# # #                     "type": "BUY" if pos.type == 0 else "SELL",
-# # #                     "volume": pos.volume,
-# # #                     "price_open": pos.price_open,
-# # #                     "price_current": pos.price_current,
-# # #                     "profit": pos.profit,
-# # #                     "swap": pos.swap,
-# # #                     "sl": pos.sl,
-# # #                     "tp": pos.tp,
-# # #                     "opened_at": datetime.fromtimestamp(pos.time).isoformat(),
-# # #                 })
-
-# # #         response["data"]["open_positions"] = positions_data
-
-       
-# # #         orders_data = []
-# # #         orders = mt5.orders_get()
-# # #         if orders:
-# # #             for order in orders:
-# # #                 orders_data.append({
-# # #                     "ticket": order.ticket,
-# # #                     "symbol": order.symbol,
-# # #                     "type": order.type,
-# # #                     "volume": order.volume_current,
-# # #                     "price": order.price_open,
-# # #                     "sl": order.sl,
-# # #                     "tp": order.tp,
-# # #                 })
-
-# # #         response["data"]["pending_orders"] = orders_data
-
-        
-# # #         date_from = datetime.now() - timedelta(days=7)
-# # #         date_to = datetime.now()
-
-# # #         trades_data = []
-# # #         deals = mt5.history_deals_get(date_from, date_to)
-
-# # #         trades_data = []
-# # #         if deals:
-# # #             for deal in deals:
-                
-# # #                 if deal.entry == mt5.DEAL_ENTRY_OUT or deal.entry == mt5.DEAL_ENTRY_INOUT:
-# # #                     trades_data.append({
-# # #                         "ticket": deal.ticket,
-# # #                         "order": deal.order,
-# # #                         "time": datetime.fromtimestamp(deal.time).isoformat(),
-# # #                         "symbol": deal.symbol,
-# # #                         "type": "BUY" if deal.type == mt5.DEAL_TYPE_BUY else "SELL",
-# # #                         "volume": deal.volume,
-# # #                         "price": deal.price,
-# # #                         "profit": deal.profit,
-# # #                         "swap": deal.swap,
-# # #                         "commission": deal.commission,
-# # #                     })
-
-# # #         response["data"]["recent_trades"] = trades_data
-
-
-# # #         return response
-
-# # #     except Exception as e:
-# # #         return {
-# # #             "status": "error",
-# # #             "message": str(e)
-# # #         }
-# # #     finally:
-       
-# # #         mt5.shutdown()
-
-
-
-
-# # import MetaTrader5 as mt5
-# # from datetime import datetime, timedelta
-# # from celery_app import celery_app
-
-
-
-# # # import boto3
-
-# # # dynamodb = boto3.resource(
-# # #     "dynamodb",
-# # #     region_name="ap-south-1"
-# # # )
-
-# # # table = dynamodb.Table("Users")
-# # # table.put_item(Item={"id": "1", "name": "Aman"})
-
-
-
-
-
-# # @celery_app.task(name="tasks.get_account_summary", bind=True)
-# # def get_account_summary(self, server: str, login: int, password: str):
-
-# #     try:
-# #         if not mt5.initialize():
-# #             return {
-# #                 "status": "error",
-# #                 "message": f"MT5 initialize failed: {mt5.last_error()}"
-# #             }
-
-# #         if not mt5.login(login=login, password=password, server=server):
-# #             mt5.shutdown()
-# #             return {
-# #                 "status": "error",
-# #                 "message": f"MT5 login failed: {mt5.last_error()}"
-# #             }
-
-# #         response = {"status": "success", "data": {}}
-
-# #         # ---------------- ACCOUNT ----------------
-# #         account = mt5.account_info()
-# #         if account is None:
-# #             mt5.shutdown()
-# #             return {
-# #                 "status": "error",
-# #                 "message": "Unable to fetch account info"
-# #             }
-
-# #         response["data"]["account"] = {
-# #             "login": account.login,
-# #             "name": account.name,
-# #             "server": account.server,
-# #             "currency": account.currency,
-# #             "leverage": account.leverage,
-# #             "balance": account.balance,
-# #             "equity": account.equity,
-# #             "profit": account.profit,
-# #             "margin": account.margin,
-# #             "margin_free": account.margin_free,
-# #             "margin_level": (account.equity / account.margin) * 100 if account.margin > 0 else None,
-# #         }
-
-# #         # ---------------- OPEN POSITIONS ----------------
-# #         positions_data = []
-# #         positions = mt5.positions_get()
-
-# #         if positions:
-# #             for pos in positions:
-# #                 positions_data.append({
-# #                     "ticket": pos.ticket,
-# #                     "symbol": pos.symbol,
-# #                     "type": "BUY" if pos.type == 0 else "SELL",
-# #                     "volume": pos.volume,
-# #                     "price_open": pos.price_open,
-# #                     "price_current": pos.price_current,
-# #                     "profit": pos.profit,
-# #                     "swap": pos.swap,
-# #                     "sl": pos.sl,
-# #                     "tp": pos.tp,
-# #                     "opened_at": datetime.fromtimestamp(pos.time).isoformat(),
-# #                 })
-
-# #         response["data"]["open_positions"] = positions_data
-
-# #         # ---------------- PENDING ORDERS ----------------
-# #         orders_data = []
-# #         orders = mt5.orders_get()
-
-# #         if orders:
-# #             for order in orders:
-# #                 orders_data.append({
-# #                     "ticket": order.ticket,
-# #                     "symbol": order.symbol,
-# #                     "type": order.type,
-# #                     "volume": order.volume_current,
-# #                     "price": order.price_open,
-# #                     "sl": order.sl,
-# #                     "tp": order.tp,
-# #                 })
-
-# #         response["data"]["pending_orders"] = orders_data
-
-# #         # ---------------- RECENT CLOSED TRADES ----------------
-# #         date_from = datetime.now() - timedelta(days=7)
-# #         date_to = datetime.now()
-
-# #         trades_data = []
-# #         net_pnl = 0.0   # ✅ Always initialized
-
-# #         deals = mt5.history_deals_get(date_from, date_to)
-
-# #         if deals:
-# #             for deal in deals:
-# #                 if deal.entry == mt5.DEAL_ENTRY_OUT or deal.entry == mt5.DEAL_ENTRY_INOUT:
-
-# #                     profit = deal.profit or 0
-# #                     swap = deal.swap or 0
-# #                     commission = deal.commission or 0
-
-# #                     trade_net = profit + swap + commission
-# #                     net_pnl += trade_net
-
-# #                     trades_data.append({
-# #                         "ticket": deal.ticket,
-# #                         "time": datetime.fromtimestamp(deal.time).isoformat(),
-# #                         "symbol": deal.symbol,
-# #                         "type": "BUY" if deal.type == mt5.DEAL_TYPE_BUY else "SELL",
-# #                         "volume": deal.volume,
-# #                         "price": deal.price,
-# #                         "profit": profit,
-# #                         "swap": swap,
-# #                         "commission": commission,
-# #                         "net_profit": trade_net
-# #                     })
-
-# #         # ✅ Always return keys even if no trades
-# #         response["data"]["recent_trades"] = trades_data
-# #         #response["data"]["recent_trades_net_pnl"] = round(net_pnl, 2)
-
-# #         response["data"]["testing"] = "TESTINGGGGGGG"
-
-# #         return response
-
-# #     except Exception as e:
-# #         return {
-# #             "status": "error",
-# #             "message": str(e)
-# #         }
-
-# #     finally:
-# #         mt5.shutdown()
-
-
-
-# ###########################################################################
-# import MetaTrader5 as mt5
-# from datetime import datetime, timedelta
-# from celery_app import celery_app
-# from collections import defaultdict
-# import boto3
-# from boto3.dynamodb.conditions import Key
-
-# # Initialize DynamoDB Resource
-# # Using the resource interface is the standard way to avoid the "M" and "S" nesting
-# dynamodb = boto3.resource(
-#     "dynamodb",
-#     region_name="ap-south-1"
-# )
-# table = dynamodb.Table("Users")
-
-# @celery_app.task(name="tasks.get_account_summary", bind=True)
-# def get_account_summary(self, server: str, login: int, password: str):
-#     try:
-#         if not mt5.initialize():
-#             return {"status": "error", "message": f"MT5 initialize failed: {mt5.last_error()}"}
-
-#         if not mt5.login(login=login, password=password, server=server):
-#             mt5.shutdown()
-#             return {"status": "error", "message": f"MT5 login failed: {mt5.last_error()}"}
-
-#         response = {"status": "success", "data": {}}
-
-#         # ---------------- ACCOUNT INFORMATION ----------------
-#         account = mt5.account_info()
-#         if account is None:
-#             mt5.shutdown()
-#             return {"status": "error", "message": "Unable to fetch account info"}
-
-#         # Note: We use strings for numbers because DynamoDB does not support Python floats well
-#         response["data"]["account"] = {
-#             "login": account.login,
-#             "name": account.name,
-#             "server": account.server,
-#             "currency": account.currency,
-#             "leverage": account.leverage,
-#             "balance": str(account.balance),
-#             "equity": str(account.equity),
-#             "profit": str(account.profit),
-#             "margin": str(account.margin),
-#             "margin_free": str(account.margin_free),
-#             "margin_level": str((account.equity / account.margin) * 100) if account.margin > 0 else "0",
-#             "company": getattr(account, "company", "N/A"),
-#             "trade_mode": getattr(account, "trade_mode", "N/A"),
-#             "limit_orders": getattr(account, "limit_orders", 0)
-#         }
-
-#         # ---------------- OPEN POSITIONS ----------------
-#         positions_data = []
-#         positions = mt5.positions_get()
-#         if positions:
-#             for pos in positions:
-#                 positions_data.append({
-#                     "ticket": int(pos.ticket),
-#                     "symbol": pos.symbol,
-#                     "type": "BUY" if pos.type == 0 else "SELL",
-#                     "volume": str(pos.volume),
-#                     "price_open": str(pos.price_open),
-#                     "price_current": str(pos.price_current),
-#                     "profit": str(pos.profit),
-#                     "swap": str(pos.swap),
-#                     "sl": str(pos.sl),
-#                     "tp": str(pos.tp),
-#                     "opened_at": datetime.fromtimestamp(pos.time).isoformat(),
-#                 })
-#         response["data"]["open_positions"] = positions_data
-
-#         # ---------------- TRADING HISTORY & ANALYTICS ----------------
-#         date_from = datetime.now() - timedelta(days=30)
-#         date_to = datetime.now()
-#         deals = mt5.history_deals_get(date_from, date_to)
-        
-#         trades_data = []
-#         rr_ratios = []
-#         wins, losses = [], []
-#         daily_pnl_map = defaultdict(float)
-#         equity_curve = []
-        
-#         current_equity = account.balance - account.profit
-#         gross_profit, gross_loss, net_pnl = 0.0, 0.0, 0.0
-
-#         if deals:
-#             sorted_deals = sorted(deals, key=lambda x: x.time)
-#             for deal in sorted_deals:
-#                 if deal.entry in [mt5.DEAL_ENTRY_OUT, mt5.DEAL_ENTRY_INOUT]:
-#                     p_val = deal.profit or 0.0
-#                     s_val = deal.swap or 0.0
-#                     c_val = deal.commission or 0.0
-#                     trade_net = p_val + s_val + c_val
-#                     net_pnl += trade_net
-                    
-#                     current_equity += trade_net
-#                     d_time = datetime.fromtimestamp(deal.time).isoformat()
-#                     equity_curve.append({"time": d_time, "equity": str(round(current_equity, 2))})
-
-#                     d_date = datetime.fromtimestamp(deal.time).strftime('%Y-%m-%d')
-#                     daily_pnl_map[d_date] += trade_net
-
-#                     if trade_net > 0:
-#                         wins.append(trade_net)
-#                         gross_profit += trade_net
-#                     elif trade_net < 0:
-#                         losses.append(abs(trade_net))
-#                         gross_loss += abs(trade_net)
-
-#                     # Historical Trade Entry - Use standard types to prevent nesting
-#                     trades_data.append({
-#                         "ticket": int(deal.ticket),
-#                         "time": d_time,
-#                         "symbol": str(deal.symbol),
-#                         "net_profit": str(round(trade_net, 2))
-#                     })
-
-#         # --- Performance Metrics ---
-#         total_t = len(wins) + len(losses)
-#         response["data"]["performance_metrics"] = {
-#             "profit_factor": str(round(gross_profit / gross_loss, 2)) if gross_loss > 0 else "0",
-#             "win_percentage": f"{round((len(wins)/total_t*100), 2) if total_t > 0 else 0}%",
-#             "net_pnl_30d": str(round(net_pnl, 2))
-#         }
-
-#         response["data"]["equity_vs_time"] = equity_curve
-#         response["data"]["daily_pnl"] = [{"date": d, "pnl": str(round(p, 2))} for d, p in sorted(daily_pnl_map.items())]
-#         response["data"]["recent_trades"] = trades_data
-#         response["data"]["testing"] = "TESTING_SUCCESSFUL"
-
-#         # ---------------- SAVE TO DYNAMODB ----------------
-#         try:
-#             # We explicitly define the item to ensure it's a clean dictionary
-#             item_to_save = {
-#                 "id": str(account.login),
-#                 "account": response["data"]["account"],
-#                 "open_positions": response["data"]["open_positions"],
-#                 "performance_metrics": response["data"]["performance_metrics"],
-#                 "equity_vs_time": response["data"]["equity_vs_time"],
-#                 "daily_pnl": response["data"]["daily_pnl"],
-#                 "recent_trades": response["data"]["recent_trades"],
-#                 "last_updated": datetime.now().isoformat()
-#             }
-            
-#             # Using table.put_item with a standard dict prevents the "M" / "S" structure
-#             table.put_item(Item=item_to_save)
-            
-#         except Exception as db_e:
-#             print(f"DynamoDB Error: {str(db_e)}")
-
-#         return response
-
-#     except Exception as e:
-#         return {"status": "error", "message": str(e)}
-#     finally:
-#         mt5.shutdown()
-
-
-
-
-
-
-
-
-
-
-
 from celery_app import celery_app
+from datetime import datetime
 from mt5_logic import fetch_mt5_analytics
-from database import save_user_performance_data
+from services.mt5_normalizer import normalize_mt5_data
+from services.performance_store import save_user_performance_snapshot
+from services.analytics_store import save_user_analytics_stats
+from db.dynamodb import get_onboarding_table
+from services.equity_store import save_equity_curve
+from services.pnl_weekly_store import save_weekly_pnl
+from services.r_multiple_store import save_r_multiples
+from services.trades_store import save_user_trades
+from services.daily_pnl_store import save_daily_pnl
+from services.dashboard_stats_store import save_dashboard_stats
+
 
 @celery_app.task(name="tasks.get_account_summary", bind=True)
-def get_account_summary(self, server, login, password):
-    # 1. Fetch Processed Data
-    result = fetch_mt5_analytics(server, login, password)
+def get_account_summary(self, user_id, server, login, password):
     
-    # 2. Save to DynamoDB if successful
+    print(f"\n{'='*60}")
+    print(f"STARTING TASK FOR USER: {user_id}")
+    print(f"{'='*60}\n")
+
+  
+    print("STEP 1: Connecting to MT5...")
+    self.update_state(state="PROGRESS", meta={"step": "connecting_to_mt5"})
+
+    result = fetch_mt5_analytics(server, login, password)
     if result["status"] == "success":
-        save_user_performance_data(login, result["data"])
-        result["data"]["testing"] = "TESTING_SUCCESSFUL"
-        
-    return result
+        debug = result["data"].get("debug_info", {})
+        print(f"✓ MT5 connected successfully")
+        print(f"  Debug Info: {debug}")
+    else:
+        print(f"✗ MT5 connection failed: {result}")
+        return result
+
+    
+    print("\nSTEP 2: Normalizing data...")
+    self.update_state(state="PROGRESS", meta={"step": "normalizing_data"})
+    
+    normalized = normalize_mt5_data(result["data"])
+    print(f"✓ Data normalized")
+    print(f"  Total trades: {normalized.get('total_trades')}")
+    print(f"  Total PnL: {normalized.get('total_pnl')}")
+
+    snapshot_date = datetime.utcnow().date().isoformat()
+    print(f"  Snapshot date: {snapshot_date}")
+
+    
+    print("\nSTEP 3: Saving analytics stats...")
+    self.update_state(state="PROGRESS", meta={"step": "saving_analytics_stats"})
+    
+    try:
+        save_user_analytics_stats(
+            user_id=user_id,
+            snapshot_date=snapshot_date,
+            analytics=normalized
+        )
+        print(f"Analytics stats saved")
+    except Exception as e:
+        print(f"ERROR in save_user_analytics_stats: {e}")
+        raise
+
+    
+    print("\nSTEP 4: Saving performance snapshot...")
+    self.update_state(state="PROGRESS", meta={"step": "saving_performance_snapshot"})
+    
+    try:
+        save_user_performance_snapshot(
+            user_id=user_id,
+            snapshot_date=snapshot_date,
+            data=normalized
+        )
+        print(f"Performance snapshot saved")
+    except Exception as e:
+        print(f"ERROR in save_user_performance_snapshot: {e}")
+        raise
+
+    
+    print("\nSTEP 5: Saving equity curve...")
+    self.update_state(state="PROGRESS", meta={"step": "saving_equity_curve"})
+    
+    try:
+        save_equity_curve(
+            user_id=user_id,
+            equity_curve=result["data"]["equity_vs_time"]
+        )
+        print(f"Equity curve saved")
+    except Exception as e:
+        print(f"ERROR in save_equity_curve: {e}")
+        raise
+
+    print("\nSTEP 6: Saving weekly PnL...")
+    self.update_state(state="PROGRESS", meta={"step": "saving_weekly_pnl"})
+    
+    weekly_pnl = normalized.get("weekly_pnl", {})
+    if weekly_pnl:
+        try:
+            save_weekly_pnl(
+                user_id=user_id,
+                weekly_pnl=weekly_pnl
+            )
+            print(f"Weekly PnL saved ({len(weekly_pnl)} weeks)")
+        except Exception as e:
+            print(f"ERROR in save_weekly_pnl: {e}")
+            raise
+    else:
+        print(f"  (No weekly PnL data to save)")
+
+    
+    print("\nSTEP 7: Saving trades...")
+    self.update_state(state="PROGRESS", meta={"step": "saving_trades"})
+    
+    try:
+        save_user_trades(
+            user_id=user_id,
+            trades=result["data"]["trades"]
+        )
+        print(f"Trades saved ({len(result['data']['trades'])} trades)")
+    except Exception as e:
+        print(f"ERROR in save_user_trades: {e}")
+        raise
+
+    
+    print("\nSTEP 8: Saving R multiples...")
+    self.update_state(state="PROGRESS", meta={"step": "saving_r_multiples"})
+    
+    try:
+        save_r_multiples(
+            user_id=user_id,
+            trades=result["data"]["trades"]
+        )
+        print(f"R multiples saved")
+    except Exception as e:
+        print(f"ERROR in save_r_multiples: {e}")
+        raise
+
+    
+    print("\nSTEP 9: Saving daily PnL...")
+    self.update_state(state="PROGRESS", meta={"step": "saving_daily_pnl"})
+    
+    try:
+        save_daily_pnl(
+            user_id=user_id,
+            trades=result["data"]["trades"]
+        )
+        print(f"Daily PnL saved")
+    except Exception as e:
+        print(f"ERROR in save_daily_pnl: {e}")
+        raise
+
+    
+    print("\nSTEP 10: Saving dashboard stats...")
+    print(f"  About to call save_dashboard_stats with:")
+    print(f"    user_id: {user_id}")
+    print(f"    snapshot_date: {snapshot_date}")
+    print(f"    analytics keys: {list(normalized.keys())}")
+    
+    self.update_state(state="PROGRESS", meta={"step": "saving_dashboard_stats"})
+    
+    try:
+        save_dashboard_stats(
+            user_id=user_id,
+            snapshot_date=snapshot_date,
+            analytics=normalized
+        )
+        print(f"Dashboard stats saved")
+    except Exception as e:
+        print(f"ERROR in save_dashboard_stats: {e}")
+        import traceback
+        print(f"  Traceback:\n{traceback.format_exc()}")
+        raise
+
+    
+    print("\nSTEP 11: Finalizing onboarding...")
+    self.update_state(state="PROGRESS", meta={"step": "finalizing_onboarding"})
+
+    try:
+        onboarding_table = get_onboarding_table()
+        response = onboarding_table.get_item(Key={"user_id": user_id})
+        item = response.get("Item", {})
+
+        onboarding_table.put_item(
+            Item={
+                "user_id": user_id,
+                "broker_name": item.get("broker_name"),
+                "broker_linked": True,
+                "sync_task_id": item.get("sync_task_id"),
+                "created_at": item.get("created_at", datetime.utcnow().isoformat()),
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+        )
+        print(f"Onboarding finalized")
+    except Exception as e:
+        print(f"ERROR in finalizing onboarding: {e}")
+        raise
+
+    print(f"\n{'='*60}")
+    print(f"TASK COMPLETED SUCCESSFULLY")
+    print(f"{'='*60}\n")
+
+    return {
+        "status": "success",
+        "message": "Analytics stats saved",
+        "summary": {
+            "total_trades": normalized["total_trades"],
+            "total_pnl": normalized["total_pnl"],
+            "win_rate": normalized["win_rate"],
+            "profit_factor": normalized["profit_factor"],
+            "expectancy": normalized["expectancy"],
+        }
+    }
