@@ -323,15 +323,57 @@ async def get_my_strategies(
     current_user: dict = Depends(get_current_user)
 ):
     strategies_table = get_strategies_table()
+    trades_table = get_trades_table()
     user_id = current_user["user_id"]
 
-    response = strategies_table.query(
+    strategies_response = strategies_table.query(
         KeyConditionExpression=Key("user_id").eq(user_id)
     )
+    strategies = strategies_response.get("Items", [])
+
+    trades_response = trades_table.query(
+        KeyConditionExpression=Key("user_id").eq(user_id)
+    )
+    all_trades = trades_response.get("Items", [])
+
+   
+    strategy_trades_map = {}
+    for trade in all_trades:
+        for tag in trade.get("tags", []):
+            if tag.startswith("strategy#"):
+                sid = tag.replace("strategy#", "")
+                if sid not in strategy_trades_map:
+                    strategy_trades_map[sid] = []
+                strategy_trades_map[sid].append(trade)
+
+
+    enriched = []
+    for strategy in strategies:
+        sid = strategy["strategy_id"]
+        trades = strategy_trades_map.get(sid, [])
+
+        total = len(trades)
+        wins = [t for t in trades if float(t.get("pnl", 0)) > 0]
+        losses = [t for t in trades if float(t.get("pnl", 0)) < 0]
+        win_rate = round((len(wins) / total) * 100, 2) if total else 0
+        avg_rr = round(
+            sum(float(t.get("r_multiple", 0)) for t in trades) / total, 2
+        ) if total else 0
+        total_pnl = round(sum(float(t.get("pnl", 0)) for t in trades), 2)
+
+        enriched.append({
+            **{k: (float(v) if isinstance(v, Decimal) else v) for k, v in strategy.items()},
+            "trades": total,
+            "wins": len(wins),
+            "losses": len(losses),
+            "win_rate": win_rate,
+            "avg_rr": avg_rr,
+            "total_pnl": total_pnl,
+        })
 
     return {
         "status": "success",
-        "data": response.get("Items", [])
+        "data": enriched
     }
 
 
