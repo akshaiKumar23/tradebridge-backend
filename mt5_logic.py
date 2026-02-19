@@ -1,6 +1,7 @@
 import MetaTrader5 as mt5
 from datetime import datetime
 from collections import defaultdict
+import time
 
 
 def fetch_mt5_analytics(server, login, password):
@@ -9,11 +10,16 @@ def fetch_mt5_analytics(server, login, password):
 
         # ---------------- INITIALIZE ----------------
 
+        # Shutdown first to clear any lingering state from previous task
+        mt5.shutdown()
+
         if not mt5.initialize():
-            return {
-                "status": "error",
-                "message": str(mt5.last_error())
-            }
+            time.sleep(2)
+            if not mt5.initialize():
+                return {
+                    "status": "error",
+                    "message": str(mt5.last_error())
+                }
 
         if not mt5.login(login=login, password=password, server=server):
             mt5.shutdown()

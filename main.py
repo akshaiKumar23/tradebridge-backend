@@ -611,7 +611,7 @@ async def sync_account(
 
     try:
         task = get_account_summary.apply_async(
-            args=[user_id, item["server"], item["login"], item["password"]]
+    args=[user_id, item["server"], int(item["login"]), str(item["password"])]
         )
         logger.info(f" Celery sync task started: {task.id}")
     except Exception as e:
@@ -631,41 +631,27 @@ from db.dynamodb import get_trades_table
 async def get_new_trades(
     current_user: dict = Depends(get_current_user)
 ):
-
     user_id = current_user["user_id"]
 
     table = get_trades_table()
-
     response = table.query(
-
-        KeyConditionExpression=
-            Key("user_id").eq(user_id),
-
+        KeyConditionExpression=Key("user_id").eq(user_id),
         ScanIndexForward=False
     )
 
     new_trades = []
-
     for item in response.get("Items", []):
-
         tags = item.get("tags", [])
 
         if tags == ["MT5 Trade"]:
-
             new_trades.append({
-
-                "timestamp": item["timestamp"],
-
-                "symbol": item["symbol"],
-
+                "timestamp": decimal_to_float(item["timestamp"]),
+                "symbol": item.get("symbol"),
                 "pnl": float(item["pnl"]),
-
                 "volume": float(item["volume"])
             })
 
     return {
-
         "status": "success",
-
         "data": new_trades
     }
