@@ -26,6 +26,7 @@ from schemas.broker_link import BrokerLinkRequest
 from routers.analytics import router as analytics_router
 from routers.trades_router import router as trades_router
 from routers.dashboard_router import router as dashboard_router
+from routers.reports import router as reports_router
 
 
 
@@ -54,6 +55,7 @@ app.add_middleware(
 app.include_router(analytics_router)
 app.include_router(trades_router)
 app.include_router(dashboard_router)
+app.include_router(reports_router)
 
 class BrokerSelectRequest(BaseModel):
     broker: str

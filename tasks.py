@@ -11,6 +11,21 @@ from services.r_multiple_store import save_r_multiples
 from services.trades_store import save_user_trades
 from services.daily_pnl_store import save_daily_pnl
 from services.dashboard_stats_store import save_dashboard_stats
+from services.reports_stats_store import save_user_report_stats
+from services.reports_symbol_summary_store import save_user_report_symbol_summary
+from services.reports_win_rate_store import save_user_report_win_rate
+from services.reports_overview_store import save_user_report_overview
+from services.drawdown_store import save_drawdown_curve
+from services.session_performance_store import save_session_performance
+from services.dashboard_session_performance_store import save_dashboard_session_performance
+from services.dashboard_symbol_performance_store import save_dashboard_symbol_performance
+from services.dashboard_daily_pnl_store import save_dashboard_daily_pnl
+from services.dashboard_equity_curve_store import save_dashboard_equity_curve
+
+
+
+
+
 
 
 @celery_app.task(name="tasks.get_account_summary", bind=True)
@@ -193,6 +208,160 @@ def get_account_summary(self, user_id, server, login, password):
     except Exception as e:
         print(f"ERROR in finalizing onboarding: {e}")
         raise
+
+    print("\nSTEP 10A: Saving report stats...")
+    self.update_state(
+        state="PROGRESS",
+        meta={"step": "saving_report_stats"}
+    )
+
+    try:
+
+        save_user_report_stats(
+
+            user_id=user_id,
+
+            snapshot_date=snapshot_date,
+
+            analytics=normalized
+
+        )
+
+        print("Report stats saved")
+
+    except Exception as e:
+
+        print(f"ERROR in save_user_report_stats: {e}")
+
+        raise
+
+    print("\nSTEP 10B: Saving report symbol summary...")
+    self.update_state(
+        state="PROGRESS",
+        meta={"step": "saving_report_symbol_summary"}
+    )
+
+    save_user_report_symbol_summary(
+        user_id=user_id,
+        snapshot_date=snapshot_date,
+        analytics=normalized
+    )
+
+    print("Report symbol summary saved")
+
+    print("\nSTEP 10C: Saving report win rate chart...")
+    self.update_state(
+        state="PROGRESS",
+        meta={"step": "saving_report_win_rate"}
+    )
+
+    save_user_report_win_rate(
+        user_id=user_id,
+        trades=result["data"]["trades"]
+    )
+
+    print("Report win rate saved")
+
+    print("\nSTEP 10D: Saving report overview chart...")
+    self.update_state(
+        state="PROGRESS",
+        meta={"step": "saving_report_overview"}
+    )
+
+    save_user_report_overview(
+        user_id=user_id,
+        trades=result["data"]["trades"]
+    )
+
+    print("Report overview saved")
+
+    print("\nSTEP 5A: Saving drawdown curve...")
+    self.update_state(
+        state="PROGRESS",
+        meta={"step": "saving_drawdown_curve"}
+    )
+
+    save_drawdown_curve(
+        user_id=user_id,
+        equity_curve=result["data"]["equity_vs_time"]
+    )
+
+    print("Drawdown curve saved")
+
+    print("\nSTEP 5B: Saving session performance...")
+    self.update_state(
+        state="PROGRESS",
+        meta={"step": "saving_session_performance"}
+    )
+
+    save_session_performance(
+        user_id=user_id,
+        trades=result["data"]["trades"]
+    )
+
+    print("Session performance saved")
+    
+    print("\nSTEP 10E: Saving dashboard session performance...")
+    self.update_state(
+        state="PROGRESS",
+        meta={"step": "saving_dashboard_session_performance"}
+    )
+
+    save_dashboard_session_performance(
+        user_id=user_id,
+        trades=result["data"]["trades"]
+    )
+
+    print("Dashboard session performance saved")
+
+    print("\nSTEP 10F: Saving dashboard symbol performance...")
+    self.update_state(
+        state="PROGRESS",
+        meta={"step": "saving_dashboard_symbol_performance"}
+    )
+
+    save_dashboard_symbol_performance(
+        user_id=user_id,
+        trades=result["data"]["trades"]
+    )
+
+    print("Dashboard symbol performance saved")
+
+    print("\nSTEP 10G: Saving dashboard daily pnl...")
+    self.update_state(
+        state="PROGRESS",
+        meta={"step": "saving_dashboard_daily_pnl"}
+    )
+
+    save_dashboard_daily_pnl(
+        user_id=user_id,
+        trades=result["data"]["trades"]
+    )
+
+    print("Dashboard daily pnl saved")
+
+    print("\nSTEP 10H: Saving dashboard equity curve...")
+    self.update_state(
+        state="PROGRESS",
+        meta={"step": "saving_dashboard_equity_curve"}
+    )
+
+    save_dashboard_equity_curve(
+        user_id=user_id,
+        equity_curve=result["data"]["equity_vs_time"]
+    )
+
+    print("Dashboard equity curve saved")
+
+
+
+
+
+
+
+
+
+
 
     print(f"\n{'='*60}")
     print(f"TASK COMPLETED SUCCESSFULLY")
