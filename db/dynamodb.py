@@ -54,3 +54,44 @@ def get_dashboard_stats_table():
     return dynamodb.Table("UserDashboardStats")
 
 
+def get_report_stats_table():
+    dynamodb = get_dynamodb()
+    return dynamodb.Table("UserReportStats")
+
+
+def get_report_symbol_summary_table():
+    dynamodb = get_dynamodb()
+    return dynamodb.Table("UserReportSymbolSummary")
+
+
+def get_report_win_rate_table():
+    dynamodb = get_dynamodb()
+    return dynamodb.Table("UserReportWinRate")
+
+def get_report_overview_table():
+    dynamodb = get_dynamodb()
+    return dynamodb.Table("UserReportOverview")
+
+def get_drawdown_curve_table():
+    dynamodb = get_dynamodb()
+    return dynamodb.Table("UserDrawdownCurve")
+
+def get_session_performance_table():
+    dynamodb = get_dynamodb()
+    return dynamodb.Table("UserSessionPerformance")
+
+def get_dashboard_session_performance_table():
+    dynamodb = get_dynamodb()
+    return dynamodb.Table("UserDashboardSessionPerformance")
+
+def get_dashboard_symbol_performance_table():
+    dynamodb = get_dynamodb()
+    return dynamodb.Table("UserDashboardSymbolPerformance")
+
+def get_dashboard_daily_pnl_table():
+    dynamodb = get_dynamodb()
+    return dynamodb.Table("UserDashboardDailyPnL")
+
+def get_dashboard_equity_curve_table():
+    dynamodb = get_dynamodb()
+    return dynamodb.Table("UserDashboardEquityCurve")

@@ -2,6 +2,9 @@ from fastapi import APIRouter, Depends
 from boto3.dynamodb.conditions import Key
 from decimal import Decimal
 from db.dynamodb import get_r_multiple_table
+from db.dynamodb import get_drawdown_curve_table
+from db.dynamodb import get_session_performance_table
+
 
 
 from auth_dependency import get_current_user
@@ -216,6 +219,59 @@ async def get_analytics_page(
         for item in r_res.get("Items", [])
     ]
 
+    drawdown_table = get_drawdown_curve_table()
+
+    drawdown_res = drawdown_table.query(
+
+        KeyConditionExpression=
+            Key("user_id").eq(user_id),
+
+        ScanIndexForward=True
+    )
+
+    drawdown_curve = [
+
+        {
+
+            "timestamp": item["timestamp"],
+
+            "value":
+                decimal_to_float(item["drawdown"])
+        }
+
+        for item in drawdown_res.get("Items", [])
+    ]
+
+    
+    session_table = get_session_performance_table()
+
+    session_res = session_table.query(
+
+        KeyConditionExpression=
+            Key("user_id").eq(user_id),
+
+        ScanIndexForward=True
+    )
+
+    performance_by_session = [
+
+        {
+
+            "session": item["session"],
+
+            "pnl":
+                decimal_to_float(item["total_pnl"]),
+
+            "dd":
+                decimal_to_float(item["total_drawdown"]),
+
+            "trades":
+                item["trade_count"]
+        }
+
+        for item in session_res.get("Items", [])
+    ]
+
 
     return {
 
@@ -231,6 +287,8 @@ async def get_analytics_page(
 
             "pnl_by_week": pnl_by_week,
             "performance_by_symbol": performance_by_symbol,
-            "r_multiple_distribution": r_multiple_distribution
+            "r_multiple_distribution": r_multiple_distribution,
+             "drawdown_curve": drawdown_curve,
+            "performance_by_session": performance_by_session
         }
     }
