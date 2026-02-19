@@ -6,6 +6,10 @@ from typing import Optional
 
 from auth_dependency import get_current_user
 from db.dynamodb import get_trades_table
+from fastapi import HTTPException
+from pydantic import BaseModel
+from typing import List
+
 
 
 router = APIRouter(
@@ -20,6 +24,18 @@ def decimal_to_native(v):
             return int(v)
         return float(v)
     return v
+
+
+class TradeTagUpdateRequest(BaseModel):
+
+    timestamp: int
+
+    strategy_ids: List[str]
+
+
+class BulkTradeTagUpdateRequest(BaseModel):
+
+    updates: List[TradeTagUpdateRequest]
 
 
 @router.get("/")
@@ -128,3 +144,108 @@ async def get_trades(
         "data": trades,
         "count": len(trades)
     }
+
+
+@router.put("/tags")
+async def update_trade_tags(
+
+    request: TradeTagUpdateRequest,
+
+    current_user: dict = Depends(get_current_user)
+
+):
+
+    table = get_trades_table()
+
+    user_id = current_user["user_id"]
+
+    try:
+
+        new_tags = ["MT5 Trade"]
+
+        for sid in request.strategy_ids:
+
+            new_tags.append(f"strategy#{sid}")
+
+        table.update_item(
+
+            Key={
+                "user_id": user_id,
+                "timestamp": request.timestamp
+            },
+
+            UpdateExpression="SET tags = :tags",
+
+            ExpressionAttributeValues={
+                ":tags": new_tags
+            },
+
+            ConditionExpression="attribute_exists(timestamp)"
+
+        )
+
+        return {
+            "status": "success",
+            "timestamp": request.timestamp,
+            "tags": new_tags
+        }
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+
+@router.put("/tags/bulk")
+async def bulk_update_trade_tags(
+
+    request: BulkTradeTagUpdateRequest,
+
+    current_user: dict = Depends(get_current_user)
+
+):
+
+    table = get_trades_table()
+
+    user_id = current_user["user_id"]
+
+    updated = []
+
+    try:
+
+        with table.batch_writer(
+            overwrite_by_pkeys=["user_id", "timestamp"]
+        ) as batch:
+
+            for update in request.updates:
+
+                new_tags = ["MT5 Trade"]
+
+                for sid in update.strategy_ids:
+
+                    new_tags.append(f"strategy#{sid}")
+
+                batch.put_item(
+                    Item={
+                        "user_id": user_id,
+                        "timestamp": update.timestamp,
+                        "tags": new_tags
+                    }
+                )
+
+                updated.append(update.timestamp)
+
+        return {
+            "status": "success",
+            "updated_count": len(updated),
+            "timestamps": updated
+        }
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )

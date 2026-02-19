@@ -38,6 +38,7 @@ def get_account_summary(self, user_id, server, login, password):
   
     print("STEP 1: Connecting to MT5...")
     self.update_state(state="PROGRESS", meta={"step": "connecting_to_mt5"})
+    print(f"Connecting with server={server}, login={login}, password=***")
 
     result = fetch_mt5_analytics(server, login, password)
     if result["status"] == "success":
@@ -194,14 +195,12 @@ def get_account_summary(self, user_id, server, login, password):
         response = onboarding_table.get_item(Key={"user_id": user_id})
         item = response.get("Item", {})
 
-        onboarding_table.put_item(
-            Item={
-                "user_id": user_id,
-                "broker_name": item.get("broker_name"),
-                "broker_linked": True,
-                "sync_task_id": item.get("sync_task_id"),
-                "created_at": item.get("created_at", datetime.utcnow().isoformat()),
-                "updated_at": datetime.utcnow().isoformat(),
+        onboarding_table.update_item(
+            Key={"user_id": user_id},
+            UpdateExpression="SET broker_linked = :bl, updated_at = :u",
+            ExpressionAttributeValues={
+                ":bl": True,
+                ":u": datetime.utcnow().isoformat(),
             }
         )
         print(f"Onboarding finalized")
