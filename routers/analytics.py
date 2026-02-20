@@ -4,7 +4,8 @@ from decimal import Decimal
 from db.dynamodb import get_r_multiple_table
 from db.dynamodb import get_drawdown_curve_table
 from db.dynamodb import get_session_performance_table
-
+from db.dynamodb import get_strategies_table
+from db.dynamodb import get_trades_table
 
 
 from auth_dependency import get_current_user
@@ -273,6 +274,65 @@ async def get_analytics_page(
     ]
 
 
+
+    strategies_table = get_strategies_table()
+    trades_table = get_trades_table()
+
+    strategies_res = strategies_table.query(
+        KeyConditionExpression=Key("user_id").eq(user_id)
+    )
+
+    strategies = strategies_res.get("Items", [])
+
+    trades_res = trades_table.query(
+        KeyConditionExpression=Key("user_id").eq(user_id)
+    )
+
+    all_trades = trades_res.get("Items", [])
+
+    strategy_trades_map = {}
+
+    for trade in all_trades:
+        for tag in trade.get("tags", []):
+            if tag.startswith("strategy#"):
+                sid = tag.replace("strategy#", "")
+                if sid not in strategy_trades_map:
+                    strategy_trades_map[sid] = []
+                strategy_trades_map[sid].append(trade)
+
+    strategy_distribution = []
+    total_trades_count = 0
+
+    for strategy in strategies:
+
+        sid = strategy["strategy_id"]
+
+        trades = strategy_trades_map.get(sid, [])
+
+        count = len(trades)
+
+        total_trades_count += count
+
+        strategy_distribution.append({
+            "strategy_id": sid,
+            "name": strategy.get("title") or "Unnamed",
+            "trades": count
+        })
+
+   
+    for s in strategy_distribution:
+
+        s["percentage"] = (
+            round((s["trades"] / total_trades_count) * 100, 2)
+            if total_trades_count else 0
+        )
+
+    strategy_distribution.sort(
+        key=lambda x: x["trades"],
+        reverse=True
+    )
+
+
     return {
 
         "status": "success",
@@ -289,6 +349,7 @@ async def get_analytics_page(
             "performance_by_symbol": performance_by_symbol,
             "r_multiple_distribution": r_multiple_distribution,
              "drawdown_curve": drawdown_curve,
-            "performance_by_session": performance_by_session
+            "performance_by_session": performance_by_session,
+            "strategy_distribution": strategy_distribution
         }
     }
