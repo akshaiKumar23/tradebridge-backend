@@ -321,7 +321,7 @@ async def get_analytics_page(
 
    
     for s in strategy_distribution:
-
+ 
         s["percentage"] = (
             round((s["trades"] / total_trades_count) * 100, 2)
             if total_trades_count else 0
