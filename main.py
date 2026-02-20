@@ -19,6 +19,7 @@ from tasks import get_account_summary
 
 from db.dynamodb import get_strategies_table
 from db.dynamodb import get_journals_table
+from db.dynamodb import get_trades_table
 from schemas.journal import JournalCreateRequest
 from boto3.dynamodb.conditions import Key
 from db.dynamodb import get_onboarding_table
@@ -28,6 +29,15 @@ from routers.trades_router import router as trades_router
 from routers.dashboard_router import router as dashboard_router
 from routers.reports import router as reports_router
 
+
+import logging
+
+logging.basicConfig(
+    level=logging.INFO, 
+    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+)
+
+logger = logging.getLogger("onboarding")
 
 
 
@@ -65,7 +75,16 @@ async def log_body(request: Request, call_next):
     if request.url.path == "/journal":
         body = await request.body()
         print("RAW BODY:", body)
-    return await call_next(request)
+
+      
+        async def receive():
+            return {"type": "http.request", "body": body}
+
+        request = Request(request.scope, receive)
+
+    response = await call_next(request)
+    return response
+
 
 class AccountRequest(BaseModel):
     server: str
@@ -304,15 +323,57 @@ async def get_my_strategies(
     current_user: dict = Depends(get_current_user)
 ):
     strategies_table = get_strategies_table()
+    trades_table = get_trades_table()
     user_id = current_user["user_id"]
 
-    response = strategies_table.query(
+    strategies_response = strategies_table.query(
         KeyConditionExpression=Key("user_id").eq(user_id)
     )
+    strategies = strategies_response.get("Items", [])
+
+    trades_response = trades_table.query(
+        KeyConditionExpression=Key("user_id").eq(user_id)
+    )
+    all_trades = trades_response.get("Items", [])
+
+   
+    strategy_trades_map = {}
+    for trade in all_trades:
+        for tag in trade.get("tags", []):
+            if tag.startswith("strategy#"):
+                sid = tag.replace("strategy#", "")
+                if sid not in strategy_trades_map:
+                    strategy_trades_map[sid] = []
+                strategy_trades_map[sid].append(trade)
+
+
+    enriched = []
+    for strategy in strategies:
+        sid = strategy["strategy_id"]
+        trades = strategy_trades_map.get(sid, [])
+
+        total = len(trades)
+        wins = [t for t in trades if float(t.get("pnl", 0)) > 0]
+        losses = [t for t in trades if float(t.get("pnl", 0)) < 0]
+        win_rate = round((len(wins) / total) * 100, 2) if total else 0
+        avg_rr = round(
+            sum(float(t.get("r_multiple", 0)) for t in trades) / total, 2
+        ) if total else 0
+        total_pnl = round(sum(float(t.get("pnl", 0)) for t in trades), 2)
+
+        enriched.append({
+            **{k: (float(v) if isinstance(v, Decimal) else v) for k, v in strategy.items()},
+            "trades": total,
+            "wins": len(wins),
+            "losses": len(losses),
+            "win_rate": win_rate,
+            "avg_rr": avg_rr,
+            "total_pnl": total_pnl,
+        })
 
     return {
         "status": "success",
-        "data": response.get("Items", [])
+        "data": enriched
     }
 
 
@@ -485,7 +546,61 @@ async def link_broker(
     request: BrokerLinkRequest,
     current_user: dict = Depends(get_current_user)
 ):
+    logger.info("/onboarding/link-broker called")
+
     user_id = current_user["user_id"]
+    onboarding_table = get_onboarding_table()
+
+    safe_request = request.dict()
+    if "password" in safe_request:
+        safe_request["password"] = "***hidden***"
+    logger.info(f"Broker link request: {safe_request}")
+
+    try:
+        existing_response = onboarding_table.get_item(Key={"user_id": user_id})
+        existing = existing_response.get("Item")
+    except Exception as e:
+        logger.error("DynamoDB get_item failed", exc_info=True)
+        raise HTTPException(status_code=500, detail="DB read failed")
+
+    now = datetime.utcnow().isoformat()
+
+    try:
+        if existing:
+            onboarding_table.update_item(
+                Key={"user_id": user_id},
+                UpdateExpression="""
+                    SET broker_name = :b,
+                        server = :s,
+                        login = :l,
+                        password = :p,
+                        broker_linked = :bl,
+                        updated_at = :u
+                """,
+                ExpressionAttributeValues={
+                    ":b": request.broker,
+                    ":s": request.server,
+                    ":l": request.login,
+                    ":p": request.password,
+                    ":bl": False,
+                    ":u": now
+                }
+            )
+        else:
+            onboarding_table.put_item(Item={
+                "user_id": user_id,
+                "broker_name": request.broker,
+                "server": request.server,
+                "login": request.login,
+                "password": request.password,
+                "broker_linked": False,
+                "created_at": now,
+                "updated_at": now,
+            })
+    except Exception as e:
+        logger.error("DynamoDB write failed", exc_info=True)
+        raise HTTPException(status_code=500, detail="DB write failed")
+
 
     task = get_account_summary.apply_async(
         args=[
@@ -496,21 +611,89 @@ async def link_broker(
         ]
     )
 
-    onboarding_table = get_onboarding_table()
-    
-   
-    onboarding_table.put_item(
-        Item={
-            "user_id": user_id,
-            "broker_name": request.broker,
-            "broker_linked": False,
-            "sync_task_id": task.id,
-            "created_at": datetime.utcnow().isoformat(),
-            "updated_at": datetime.utcnow().isoformat(),
-        }
-    )
+    logger.info(f"Celery task started: {task.id}")
 
     return {
         "status": "syncing",
         "task_id": task.id
+    }
+
+@app.post("/account/sync")
+async def sync_account(
+    current_user: dict = Depends(get_current_user)
+):
+    logger.info("/account/sync called")
+
+    user_id = current_user["user_id"]
+    logger.info(f"User ID: {user_id}")
+
+    onboarding_table = get_onboarding_table()
+
+   
+    try:
+        response = onboarding_table.get_item(Key={"user_id": user_id})
+        logger.info(f"DynamoDB get_item raw response: {response}")
+    except Exception as e:
+        logger.error(" DynamoDB get_item FAILED", exc_info=True)
+        raise HTTPException(status_code=500, detail="DB fetch failed")
+
+    item = response.get("Item")
+    logger.info(f"DynamoDB Item (raw): {item}")
+
+
+    if not item:
+        logger.warning(f" No onboarding record found for user_id={user_id}")
+        raise HTTPException(status_code=400, detail="Broker not linked")
+
+ 
+    missing_fields = [k for k in ["server", "login", "password"] if not item.get(k)]
+    if missing_fields:
+        logger.warning(f"Missing broker credentials: {missing_fields}")
+        raise HTTPException(status_code=400, detail="Broker credentials missing")
+
+    try:
+        task = get_account_summary.apply_async(
+    args=[user_id, item["server"], int(item["login"]), str(item["password"])]
+        )
+        logger.info(f" Celery sync task started: {task.id}")
+    except Exception as e:
+        logger.error("Celery task creation failed", exc_info=True)
+        raise HTTPException(status_code=500, detail="Task dispatch failed")
+
+    return {
+        "status": "processing",
+        "task_id": task.id
+    }
+
+
+
+from db.dynamodb import get_trades_table
+
+@app.get("/account/sync/new-trades")
+async def get_new_trades(
+    current_user: dict = Depends(get_current_user)
+):
+    user_id = current_user["user_id"]
+
+    table = get_trades_table()
+    response = table.query(
+        KeyConditionExpression=Key("user_id").eq(user_id),
+        ScanIndexForward=False
+    )
+
+    new_trades = []
+    for item in response.get("Items", []):
+        tags = item.get("tags", [])
+
+        if tags == ["MT5 Trade"]:
+            new_trades.append({
+                "timestamp": decimal_to_float(item["timestamp"]),
+                "symbol": item.get("symbol"),
+                "pnl": float(item["pnl"]),
+                "volume": float(item["volume"])
+            })
+
+    return {
+        "status": "success",
+        "data": new_trades
     }
