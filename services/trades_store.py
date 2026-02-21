@@ -46,9 +46,9 @@ def save_user_trades(user_id: str, trades: list):
                 ExpressionAttributeValues={
                     ":pid": position_id,
                     ":sym": trade["symbol"],
-                    ":dir": "LONG" if Decimal(str(trade["pnl"])) >= 0 else "SHORT",
-                    ":entry": Decimal("0"),
-                    ":exit": Decimal("0"),
+                    ":dir": trade.get("direction", "LONG"),
+                    ":entry": Decimal(str(trade.get("entry_price", 0))),
+                    ":exit": Decimal(str(trade.get("exit_price", 0))),
                     ":vol": Decimal(str(trade["volume"])),
                     ":pnl": Decimal(str(trade["pnl"])),
                     ":r": Decimal(str(trade["r_multiple"])),
