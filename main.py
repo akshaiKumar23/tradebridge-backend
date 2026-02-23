@@ -685,14 +685,14 @@ async def get_new_trades(
     for item in response.get("Items", []):
         tags = item.get("tags", [])
 
-        if tags == ["MT5 Trade"]:
+        if "unreviewed" in tags:
             new_trades.append({
                 "timestamp": decimal_to_float(item["timestamp"]),
                 "symbol": item.get("symbol"),
                 "pnl": float(item["pnl"]),
                 "volume": float(item["volume"])
             })
-
+    print(f"these are the new trades {new_trades}")
     return {
         "status": "success",
         "data": new_trades

@@ -50,7 +50,6 @@ async def get_trades(
     user_id = current_user["user_id"]
     table = get_trades_table()
 
-    
     strategies_table = get_strategies_table()
     strategies_response = strategies_table.query(
         KeyConditionExpression=Key("user_id").eq(user_id)
@@ -69,9 +68,13 @@ async def get_trades(
     trades = []
 
     for item in items:
-       
+        raw_tags = item.get("tags", [])
+
         resolved_tags = []
-        for t in item.get("tags", []):
+        for t in raw_tags:
+            if t == "unreviewed":
+               
+                continue
             if t.startswith("strategy#"):
                 strategy_id = t.replace("strategy#", "")
                 resolved_tags.append(strategy_map.get(strategy_id, t))
@@ -91,7 +94,8 @@ async def get_trades(
             "pnl": decimal_to_native(item.get("pnl", 0)),
             "r": decimal_to_native(item.get("r_multiple", 0)),
             "tags": resolved_tags,
-            "timestamp": decimal_to_native(item["timestamp"])
+            "timestamp": decimal_to_native(item["timestamp"]),
+            "is_new": "unreviewed" in raw_tags,  
         }
 
         should_include = True
@@ -138,6 +142,7 @@ async def get_trades(
                 should_include = False
 
         if tag and should_include:
+           
             if tag not in resolved_tags:
                 should_include = False
 

@@ -4,7 +4,7 @@ from db.dynamodb import get_trades_table
 
 logger = logging.getLogger(__name__)
 
-# Minimum valid timestamp: Jan 1, 2020 00:00:00 UTC
+
 MIN_VALID_TIMESTAMP = 1577836800
 
 
@@ -24,8 +24,7 @@ def save_user_trades(user_id: str, trades: list):
             timestamp = int(trade["timestamp"])
             position_id = int(trade["position_id"])
 
-            # Sanity check: reject timestamps that are clearly wrong
-            # (e.g. position_id accidentally used as timestamp)
+        
             if timestamp < MIN_VALID_TIMESTAMP:
                 logger.error(
                     f"Skipping trade with suspicious timestamp {timestamp} "
@@ -71,7 +70,7 @@ def save_user_trades(user_id: str, trades: list):
                     ":pnl": Decimal(str(trade["pnl"])),
                     ":r": Decimal(str(trade["r_multiple"])),
                     ":risk": Decimal(str(trade["risk_amount"])),
-                    ":default_tags": ["MT5 Trade"],
+                    ":default_tags": ["unreviewed"],
                 }
             )
             saved_count += 1
