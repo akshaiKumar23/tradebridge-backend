@@ -1,5 +1,5 @@
 import MetaTrader5 as mt5
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import defaultdict
 import time
 
@@ -10,7 +10,6 @@ def fetch_mt5_analytics(server, login, password):
 
         # ---------------- INITIALIZE ----------------
 
-        # Shutdown first to clear any lingering state from previous task
         mt5.shutdown()
 
         if not mt5.initialize():
@@ -69,7 +68,12 @@ def fetch_mt5_analytics(server, login, password):
 
         # ---------------- FETCH ALL DEALS ----------------
 
-        deals = mt5.history_deals_get(0, datetime.now()) or []
+        # MT5 uses Eastern Summer Time (UTC-4), so we add a 6-hour buffer
+        # to datetime.now() to ensure all recent trades are captured
+        # regardless of the timezone difference between the server and MT5
+        end_time = datetime.now() + timedelta(hours=6)
+
+        deals = mt5.history_deals_get(0, end_time) or []
         deals = sorted(deals, key=lambda d: d.time)
 
         print(f"\n=== FETCHING ALL HISTORY ===")
@@ -103,12 +107,12 @@ def fetch_mt5_analytics(server, login, password):
 
             entry_deal = None
             exit_deal = None
-            
+
             total_profit = 0.0
             total_swap = 0.0
             total_commission = 0.0
             total_volume = 0.0
-            
+
             symbol = None
             open_time = None
             close_time = None
@@ -164,7 +168,7 @@ def fetch_mt5_analytics(server, login, password):
             # Risk calculation
             risk_amount = None
             position_history = mt5.history_orders_get(position=position_id)
-            
+
             if position_history:
                 for order in position_history:
                     if hasattr(order, "sl") and order.sl > 0 and entry_deal:
@@ -218,7 +222,7 @@ def fetch_mt5_analytics(server, login, password):
             "wins": len(wins),
             "losses": len(losses),
             "win_percentage":
-                round((len(wins)/total_trades)*100, 2)
+                round((len(wins) / total_trades) * 100, 2)
                 if total_trades else 0,
             "profit_factor": round(profit_factor, 2),
             "expectancy": round(expectancy, 2),
@@ -230,7 +234,7 @@ def fetch_mt5_analytics(server, login, password):
         print(f"Closed positions: {len(trades_list)}")
         print(f"Wins: {len(wins)}, Losses: {len(losses)}")
         print(f"Equity points: {len(equity_curve)}")
-        
+
         if trades_list:
             print(f"\n=== SAMPLE TRADES ===")
             for i, t in enumerate(sorted(trades_list, key=lambda x: x["close_time"])[:3]):
