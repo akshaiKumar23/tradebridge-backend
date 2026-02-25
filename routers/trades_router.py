@@ -148,7 +148,8 @@ async def get_trades(
 
         if should_include:
             trades.append(trade)
-
+    
+    trades.sort(key=lambda x: x["timestamp"], reverse=True)
     return {
         "status": "success",
         "data": trades,
@@ -201,7 +202,7 @@ async def bulk_update_trade_tags(
 
     try:
         for update in request.updates:
-            new_tags = ["MT5 Trade"]
+            new_tags = [""]
             for sid in update.strategy_ids:
                 new_tags.append(f"strategy#{sid}")
 

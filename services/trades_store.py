@@ -4,7 +4,6 @@ from db.dynamodb import get_trades_table
 
 logger = logging.getLogger(__name__)
 
-
 MIN_VALID_TIMESTAMP = 1577836800
 
 
@@ -14,8 +13,7 @@ def save_user_trades(user_id: str, trades: list):
         return
 
     table = get_trades_table()
-    seen_keys = set()
-    duplicate_count = 0
+    seen_timestamps = {}  
     saved_count = 0
     skipped_invalid = 0
 
@@ -24,7 +22,6 @@ def save_user_trades(user_id: str, trades: list):
             timestamp = int(trade["timestamp"])
             position_id = int(trade["position_id"])
 
-        
             if timestamp < MIN_VALID_TIMESTAMP:
                 logger.error(
                     f"Skipping trade with suspicious timestamp {timestamp} "
@@ -33,11 +30,12 @@ def save_user_trades(user_id: str, trades: list):
                 skipped_invalid += 1
                 continue
 
-            unique_key = (user_id, timestamp)
-            if unique_key in seen_keys:
-                duplicate_count += 1
-                continue
-            seen_keys.add(unique_key)
+            
+            if timestamp in seen_timestamps:
+                seen_timestamps[timestamp] += 1
+                timestamp = timestamp + seen_timestamps[timestamp]
+            else:
+                seen_timestamps[timestamp] = 0
 
             table.update_item(
                 Key={
@@ -82,8 +80,5 @@ def save_user_trades(user_id: str, trades: list):
 
     if skipped_invalid > 0:
         logger.warning(f"Skipped {skipped_invalid} trades with invalid timestamps for user_id={user_id}")
-
-    if duplicate_count > 0:
-        logger.warning(f"Skipped {duplicate_count} duplicate trades for user_id={user_id}")
 
     logger.info(f"Successfully saved {saved_count} trades for user_id={user_id}")
