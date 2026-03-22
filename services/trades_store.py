@@ -4,6 +4,8 @@ from db.dynamodb import get_trades_table
 
 logger = logging.getLogger(__name__)
 
+MIN_VALID_TIMESTAMP = 1577836800
+
 
 def save_user_trades(user_id: str, trades: list):
     if not trades:
@@ -11,20 +13,29 @@ def save_user_trades(user_id: str, trades: list):
         return
 
     table = get_trades_table()
-    seen_keys = set()
-    duplicate_count = 0
+    seen_timestamps = {}  
     saved_count = 0
+    skipped_invalid = 0
 
     for trade in trades:
         try:
             timestamp = int(trade["timestamp"])
             position_id = int(trade["position_id"])
 
-            unique_key = (user_id, timestamp)
-            if unique_key in seen_keys:
-                duplicate_count += 1
+            if timestamp < MIN_VALID_TIMESTAMP:
+                logger.error(
+                    f"Skipping trade with suspicious timestamp {timestamp} "
+                    f"(position_id={position_id}) for user_id={user_id}"
+                )
+                skipped_invalid += 1
                 continue
-            seen_keys.add(unique_key)
+
+            
+            if timestamp in seen_timestamps:
+                seen_timestamps[timestamp] += 1
+                timestamp = timestamp + seen_timestamps[timestamp]
+            else:
+                seen_timestamps[timestamp] = 0
 
             table.update_item(
                 Key={
@@ -46,14 +57,18 @@ def save_user_trades(user_id: str, trades: list):
                 ExpressionAttributeValues={
                     ":pid": position_id,
                     ":sym": trade["symbol"],
-                    ":dir": "LONG" if Decimal(str(trade["pnl"])) >= 0 else "SHORT",
-                    ":entry": Decimal("0"),
-                    ":exit": Decimal("0"),
+                    ":dir": trade.get("direction", "LONG"),
+                    ":entry": Decimal(str(
+                        trade.get("entry_price") or trade.get("entry") or 0
+                    )),
+                    ":exit": Decimal(str(
+                        trade.get("exit_price") or trade.get("exit") or 0
+                    )),
                     ":vol": Decimal(str(trade["volume"])),
                     ":pnl": Decimal(str(trade["pnl"])),
                     ":r": Decimal(str(trade["r_multiple"])),
                     ":risk": Decimal(str(trade["risk_amount"])),
-                    ":default_tags": ["MT5 Trade"],
+                    ":default_tags": ["unreviewed"],
                 }
             )
             saved_count += 1
@@ -63,7 +78,7 @@ def save_user_trades(user_id: str, trades: list):
                 f"Invalid trade data for user_id={user_id}, trade={trade}, error={e}"
             )
 
-    if duplicate_count > 0:
-        logger.warning(f"Skipped {duplicate_count} duplicate trades for user_id={user_id}")
+    if skipped_invalid > 0:
+        logger.warning(f"Skipped {skipped_invalid} trades with invalid timestamps for user_id={user_id}")
 
     logger.info(f"Successfully saved {saved_count} trades for user_id={user_id}")

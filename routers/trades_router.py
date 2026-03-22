@@ -50,7 +50,6 @@ async def get_trades(
     user_id = current_user["user_id"]
     table = get_trades_table()
 
-    # Fetch strategies and build lookup map
     strategies_table = get_strategies_table()
     strategies_response = strategies_table.query(
         KeyConditionExpression=Key("user_id").eq(user_id)
@@ -69,9 +68,13 @@ async def get_trades(
     trades = []
 
     for item in items:
-       
+        raw_tags = item.get("tags", [])
+
         resolved_tags = []
-        for t in item.get("tags", []):
+        for t in raw_tags:
+            if t == "unreviewed":
+               
+                continue
             if t.startswith("strategy#"):
                 strategy_id = t.replace("strategy#", "")
                 resolved_tags.append(strategy_map.get(strategy_id, t))
@@ -91,7 +94,8 @@ async def get_trades(
             "pnl": decimal_to_native(item.get("pnl", 0)),
             "r": decimal_to_native(item.get("r_multiple", 0)),
             "tags": resolved_tags,
-            "timestamp": decimal_to_native(item["timestamp"])
+            "timestamp": decimal_to_native(item["timestamp"]),
+            "is_new": "unreviewed" in raw_tags,  
         }
 
         should_include = True
@@ -138,12 +142,14 @@ async def get_trades(
                 should_include = False
 
         if tag and should_include:
+           
             if tag not in resolved_tags:
                 should_include = False
 
         if should_include:
             trades.append(trade)
-
+    
+    trades.sort(key=lambda x: x["timestamp"], reverse=True)
     return {
         "status": "success",
         "data": trades,
@@ -196,7 +202,7 @@ async def bulk_update_trade_tags(
 
     try:
         for update in request.updates:
-            new_tags = ["MT5 Trade"]
+            new_tags = [""]
             for sid in update.strategy_ids:
                 new_tags.append(f"strategy#{sid}")
 
@@ -221,3 +227,104 @@ async def bulk_update_trade_tags(
     except Exception as e:
         print(f"Bulk update error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class TradeNotesUpdateRequest(BaseModel):
+    timestamp: int
+    entry_reason: Optional[str] = None
+    exit_reason: Optional[str] = None
+    mistakes: Optional[str] = None
+    lessons_learned: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@router.get("/{timestamp}/notes")
+async def get_trade_notes(
+    timestamp: int,
+    current_user: dict = Depends(get_current_user)
+):
+    user_id = current_user["user_id"]
+    table = get_trades_table()
+
+    response = table.get_item(
+        Key={"user_id": user_id, "timestamp": timestamp}
+    )
+    item = response.get("Item")
+    if not item:
+        raise HTTPException(status_code=404, detail="Trade not found")
+
+    return {
+        "status": "success",
+        "data": {
+            "timestamp": timestamp,
+            "entry_reason":    item.get("entry_reason", ""),
+            "exit_reason":     item.get("exit_reason", ""),
+            "mistakes":        item.get("mistakes", ""),
+            "lessons_learned": item.get("lessons_learned", ""),
+            "notes":           item.get("notes", ""),
+        }
+    }
+
+
+
+@router.put("/{timestamp}/notes")
+async def update_trade_notes(
+    timestamp: int,
+    request: TradeNotesUpdateRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    user_id = current_user["user_id"]
+    table = get_trades_table()
+
+    
+    update_parts = []
+    expr_names = {"#ts": "timestamp"}
+    expr_values = {}
+
+    fields = {
+        "entry_reason":    request.entry_reason,
+        "exit_reason":     request.exit_reason,
+        "mistakes":        request.mistakes,
+        "lessons_learned": request.lessons_learned,
+        "notes":           request.notes,
+    }
+
+    for field, value in fields.items():
+        if value is not None:              
+            placeholder = f":{field}"
+            update_parts.append(f"{field} = {placeholder}")
+            expr_values[placeholder] = value
+
+    if not update_parts:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    update_expression = "SET " + ", ".join(update_parts)
+
+    try:
+        table.update_item(
+            Key={"user_id": user_id, "timestamp": timestamp},
+            UpdateExpression=update_expression,
+            ExpressionAttributeNames=expr_names,
+            ExpressionAttributeValues=expr_values,
+            ConditionExpression="attribute_exists(#ts)"
+        )
+    except table.meta.client.exceptions.ConditionalCheckFailedException:
+        raise HTTPException(status_code=404, detail="Trade not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {
+        "status": "success",
+        "timestamp": timestamp,
+        "updated_fields": list(fields.keys())
+    }
+
+
+
+
+
+
+
+
+
+
