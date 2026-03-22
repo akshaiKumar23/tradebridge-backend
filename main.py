@@ -216,23 +216,23 @@ async def verify_payment(
     existing = table.get_item(Key={"user_id": user_id})
     item = existing.get("Item", {})
 
-    # Idempotency
+  
     if item.get("has_paid"):
         return {"status": "already_paid"}
 
-    # Replay attack — order ID must match what we stored
+
     stored_order_id = item.get("razorpay_order_id")
     if not stored_order_id or stored_order_id != request.razorpay_order_id:
         raise HTTPException(status_code=400, detail="Order ID mismatch")
 
-    # Order expiry — reject orders older than 30 minutes
+    
     order_created_at = item.get("order_created_at")
     if order_created_at:
         order_time = datetime.fromisoformat(order_created_at)
         if datetime.utcnow() - order_time > timedelta(minutes=30):
             raise HTTPException(status_code=400, detail="Order expired. Please try again.")
 
-    # Signature verification with constant-time comparison (prevents timing attacks)
+
     body = f"{request.razorpay_order_id}|{request.razorpay_payment_id}"
     expected = hmac.new(
         RAZORPAY_KEY_SECRET.encode(),
