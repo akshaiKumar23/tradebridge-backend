@@ -8,3 +8,4 @@ pydantic
 pyjwt[crypto]
 requests
 boto3
+jose

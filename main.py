@@ -387,37 +387,97 @@ async def get_task_result(
     return {"task_id": task_id, "status": task_result.status, "message": "Task is still in progress."}
 
 
+# @app.post("/account/sync")
+# async def sync_account(current_user: dict = Depends(require_payment)):
+#     logger.info("/account/sync called")
+#     user_id = current_user["user_id"]
+
+#     onboarding_table = get_onboarding_table()
+
+#     try:
+#         response = onboarding_table.get_item(Key={"user_id": user_id})
+#     except Exception as e:
+#         logger.error("DynamoDB get_item FAILED", exc_info=True)
+#         raise HTTPException(status_code=500, detail="DB fetch failed")
+
+#     item = response.get("Item")
+#     if not item:
+#         raise HTTPException(status_code=400, detail="Broker not linked")
+
+#     missing_fields = [k for k in ["server", "login", "password"] if not item.get(k)]
+#     if missing_fields:
+#         raise HTTPException(status_code=400, detail="Broker credentials missing")
+
+#     try:
+#         task = get_account_summary.apply_async(
+#             args=[user_id, item["server"], int(item["login"]), str(item["password"])]
+#         )
+#         logger.info(f"Celery sync task started: {task.id}")
+#     except Exception as e:
+#         logger.error("Celery task creation failed", exc_info=True)
+#         raise HTTPException(status_code=500, detail="Task dispatch failed")
+
+#     return {"status": "processing", "task_id": task.id}
+
+
+
+
+
+
+###########################################################################################
+
+
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import Query # Add this to your imports
+
 @app.post("/account/sync")
-async def sync_account(current_user: dict = Depends(require_payment)):
-    logger.info("/account/sync called")
+async def sync_account(
+    # Accept dates in YYYY-MM-DD format as query parameters
+    from_date: str = Query(None, regex=r"^\d{4}-\d{2}-\d{2}$"),
+    to_date: str = Query(None, regex=r"^\d{4}-\d{2}-\d{2}$"),
+    current_user: dict = Depends(get_current_user)
+):
     user_id = current_user["user_id"]
 
-    onboarding_table = get_onboarding_table()
+    # Default to last 30 days if no dates are provided
+    if not from_date:
+        from_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+    if not to_date:
+        to_date = datetime.now().strftime('%Y-%m-%d')
 
-    try:
-        response = onboarding_table.get_item(Key={"user_id": user_id})
-    except Exception as e:
-        logger.error("DynamoDB get_item FAILED", exc_info=True)
-        raise HTTPException(status_code=500, detail="DB fetch failed")
-
+    # Fetch credentials from UserOnboarding table
+    table = get_onboarding_table()
+    response = table.get_item(Key={"user_id": user_id})
     item = response.get("Item")
+
     if not item:
         raise HTTPException(status_code=400, detail="Broker not linked")
 
-    missing_fields = [k for k in ["server", "login", "password"] if not item.get(k)]
-    if missing_fields:
-        raise HTTPException(status_code=400, detail="Broker credentials missing")
-
     try:
+        # Dispatch task with 6 arguments (user_id, server, login, password, from_date, to_date)
         task = get_account_summary.apply_async(
-            args=[user_id, item["server"], int(item["login"]), str(item["password"])]
+            args=[
+                str(user_id),
+                str(item["server"]),
+                int(item["login"]),
+                str(item["password"]),
+                str(from_date),
+                str(to_date)
+            ]
         )
-        logger.info(f"Celery sync task started: {task.id}")
+        return {"status": "processing", "task_id": task.id, "range": f"{from_date} to {to_date}"}
     except Exception as e:
-        logger.error("Celery task creation failed", exc_info=True)
-        raise HTTPException(status_code=500, detail="Task dispatch failed")
+        logger.error(f"Celery Dispatch Error: {e}")
+        raise HTTPException(status_code=500, detail="Could not start sync task")
 
-    return {"status": "processing", "task_id": task.id}
+
+
+
+
+
+#################################################################
+
 
 
 @app.get("/account/sync/new-trades")
