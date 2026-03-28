@@ -1,97 +1,72 @@
 import boto3
 import os
 
-def get_dynamodb():
-    return boto3.resource(
-        "dynamodb",
-        region_name=os.getenv("AWS_REGION", "ap-south-1"),
-    )
+
+_dynamodb = boto3.resource(
+    "dynamodb",
+    region_name=os.getenv("AWS_REGION", "ap-south-1"),
+)
+
 
 def get_strategies_table():
-    dynamodb = get_dynamodb()
-    return dynamodb.Table("UserStrategies")
-
+    return _dynamodb.Table("UserStrategies")
 
 def get_journals_table():
-    dynamodb = get_dynamodb()
-    return dynamodb.Table("DailyJournals")
+    return _dynamodb.Table("DailyJournals")
 
 def get_performance_snapshots_table():
-    dynamodb = get_dynamodb()
-    return dynamodb.Table("UserPerformanceSnapshots")
+    return _dynamodb.Table("UserPerformanceSnapshots")
 
 def get_onboarding_table():
-    dynamodb = get_dynamodb()
-    return dynamodb.Table("UserOnboarding")
+    return _dynamodb.Table("UserOnboarding")
 
 def get_analytics_stats_table():
-    dynamodb = get_dynamodb()
-    return dynamodb.Table("UserAnalyticsStats")
+    return _dynamodb.Table("UserAnalyticsStats")
 
 def get_equity_curve_table():
-    dynamodb = get_dynamodb()
-    return dynamodb.Table("UserEquityCurve")
+    return _dynamodb.Table("UserEquityCurve")
 
 def get_pnl_weekly_table():
-    dynamodb = get_dynamodb()
-    return dynamodb.Table("UserPnLWeekly")
+    return _dynamodb.Table("UserPnLWeekly")
 
 def get_r_multiple_table():
-    dynamodb = get_dynamodb()
-    return dynamodb.Table("UserRMultiples")
+    return _dynamodb.Table("UserRMultiples")
 
 def get_trades_table():
-    dynamodb = get_dynamodb()
-    return dynamodb.Table("UserTrades")
-
+    return _dynamodb.Table("UserTrades")
 
 def get_daily_pnl_table():
-    dynamodb = get_dynamodb()
-    return dynamodb.Table("UserDailyPnL")
+    return _dynamodb.Table("UserDailyPnL")
 
 def get_dashboard_stats_table():
-    dynamodb = get_dynamodb()
-    return dynamodb.Table("UserDashboardStats")
-
+    return _dynamodb.Table("UserDashboardStats")
 
 def get_report_stats_table():
-    dynamodb = get_dynamodb()
-    return dynamodb.Table("UserReportStats")
-
+    return _dynamodb.Table("UserReportStats")
 
 def get_report_symbol_summary_table():
-    dynamodb = get_dynamodb()
-    return dynamodb.Table("UserReportSymbolSummary")
-
+    return _dynamodb.Table("UserReportSymbolSummary")
 
 def get_report_win_rate_table():
-    dynamodb = get_dynamodb()
-    return dynamodb.Table("UserReportWinRate")
+    return _dynamodb.Table("UserReportWinRate")
 
 def get_report_overview_table():
-    dynamodb = get_dynamodb()
-    return dynamodb.Table("UserReportOverview")
+    return _dynamodb.Table("UserReportOverview")
 
 def get_drawdown_curve_table():
-    dynamodb = get_dynamodb()
-    return dynamodb.Table("UserDrawdownCurve")
+    return _dynamodb.Table("UserDrawdownCurve")
 
 def get_session_performance_table():
-    dynamodb = get_dynamodb()
-    return dynamodb.Table("UserSessionPerformance")
+    return _dynamodb.Table("UserSessionPerformance")
 
 def get_dashboard_session_performance_table():
-    dynamodb = get_dynamodb()
-    return dynamodb.Table("UserDashboardSessionPerformance")
+    return _dynamodb.Table("UserDashboardSessionPerformance")
 
 def get_dashboard_symbol_performance_table():
-    dynamodb = get_dynamodb()
-    return dynamodb.Table("UserDashboardSymbolPerformance")
+    return _dynamodb.Table("UserDashboardSymbolPerformance")
 
 def get_dashboard_daily_pnl_table():
-    dynamodb = get_dynamodb()
-    return dynamodb.Table("UserDashboardDailyPnL")
+    return _dynamodb.Table("UserDashboardDailyPnL")
 
 def get_dashboard_equity_curve_table():
-    dynamodb = get_dynamodb()
-    return dynamodb.Table("UserDashboardEquityCurve")
+    return _dynamodb.Table("UserDashboardEquityCurve")

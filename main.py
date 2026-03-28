@@ -45,8 +45,10 @@ RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET")
 RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET")
 
 
-logger.info(f"Razorpay Key ID loaded: {RAZORPAY_KEY_ID[:8] if RAZORPAY_KEY_ID else 'MISSING'}")
-logger.info(f"Razorpay Secret loaded: {'YES' if RAZORPAY_KEY_SECRET else 'MISSING'}")
+logger.info(
+    f"Razorpay Key ID loaded: {RAZORPAY_KEY_ID[:8] if RAZORPAY_KEY_ID else 'MISSING'}")
+logger.info(
+    f"Razorpay Secret loaded: {'YES' if RAZORPAY_KEY_SECRET else 'MISSING'}")
 
 app = FastAPI(
     title="MT5 Secure Analytics & Journal API",
@@ -76,10 +78,12 @@ app.include_router(reports_router)
 class BrokerSelectRequest(BaseModel):
     broker: str
 
+
 class AccountRequest(BaseModel):
     server: str
     login: int
     password: str
+
 
 class PaymentVerifyRequest(BaseModel):
     razorpay_order_id: str
@@ -98,7 +102,7 @@ def decimal_to_float(obj):
 # ─── Dependencies ────────────────────────────────────────────────────────────
 
 async def require_payment(current_user: dict = Depends(get_current_user)):
-    """Dependency that blocks access if user has not paid."""
+
     table = get_onboarding_table()
     response = table.get_item(Key={"user_id": current_user["user_id"]})
     item = response.get("Item", {})
@@ -216,22 +220,19 @@ async def verify_payment(
     existing = table.get_item(Key={"user_id": user_id})
     item = existing.get("Item", {})
 
-  
     if item.get("has_paid"):
         return {"status": "already_paid"}
-
 
     stored_order_id = item.get("razorpay_order_id")
     if not stored_order_id or stored_order_id != request.razorpay_order_id:
         raise HTTPException(status_code=400, detail="Order ID mismatch")
 
-    
     order_created_at = item.get("order_created_at")
     if order_created_at:
         order_time = datetime.fromisoformat(order_created_at)
         if datetime.utcnow() - order_time > timedelta(minutes=30):
-            raise HTTPException(status_code=400, detail="Order expired. Please try again.")
-
+            raise HTTPException(
+                status_code=400, detail="Order expired. Please try again.")
 
     body = f"{request.razorpay_order_id}|{request.razorpay_payment_id}"
     expected = hmac.new(
@@ -241,7 +242,8 @@ async def verify_payment(
     ).hexdigest()
 
     if not hmac.compare_digest(expected, request.razorpay_signature):
-        raise HTTPException(status_code=400, detail="Invalid payment signature")
+        raise HTTPException(
+            status_code=400, detail="Invalid payment signature")
 
     # Fetch payment from Razorpay and validate amount, currency, and captured status
     client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
@@ -290,7 +292,8 @@ async def razorpay_webhook(request: Request):
     ).hexdigest()
 
     if not hmac.compare_digest(expected, signature):
-        raise HTTPException(status_code=400, detail="Invalid webhook signature")
+        raise HTTPException(
+            status_code=400, detail="Invalid webhook signature")
 
     payload = json.loads(body)
     event = payload.get("event")
@@ -304,7 +307,8 @@ async def razorpay_webhook(request: Request):
 
         # Validate amount and currency
         if payment.get("amount") != 2000 or payment.get("currency") != "USD":
-            logger.warning(f"Webhook ignored: unexpected amount/currency for user {user_id}")
+            logger.warning(
+                f"Webhook ignored: unexpected amount/currency for user {user_id}")
             return {"status": "ignored"}
 
         table = get_onboarding_table()
@@ -338,7 +342,8 @@ async def request_account_summary(
     current_user: dict = Depends(get_current_user),
 ):
     task = get_account_summary.apply_async(
-        args=[current_user["user_id"], request.server, request.login, request.password]
+        args=[current_user["user_id"], request.server,
+              request.login, request.password]
     )
     return {"task_id": task.id, "status": "processing"}
 
@@ -404,13 +409,16 @@ async def sync_account(current_user: dict = Depends(require_payment)):
     if not item:
         raise HTTPException(status_code=400, detail="Broker not linked")
 
-    missing_fields = [k for k in ["server", "login", "password"] if not item.get(k)]
+    missing_fields = [k for k in [
+        "server", "login", "password"] if not item.get(k)]
     if missing_fields:
-        raise HTTPException(status_code=400, detail="Broker credentials missing")
+        raise HTTPException(
+            status_code=400, detail="Broker credentials missing")
 
     try:
         task = get_account_summary.apply_async(
-            args=[user_id, item["server"], int(item["login"]), str(item["password"])]
+            args=[user_id, item["server"], int(
+                item["login"]), str(item["password"])]
         )
         logger.info(f"Celery sync task started: {task.id}")
     except Exception as e:
@@ -452,23 +460,7 @@ async def get_onboarding_status(current_user: dict = Depends(get_current_user)):
     response = table.get_item(Key={"user_id": user_id})
 
     if "Item" not in response:
-        snapshots_table = get_performance_snapshots_table()
-        snapshot_response = snapshots_table.query(
-            KeyConditionExpression=Key("user_id").eq(user_id),
-            Limit=1,
-        )
-        has_snapshots = len(snapshot_response.get("Items", [])) > 0
-
-        table.put_item(Item={
-            "user_id": user_id,
-            "broker_linked": has_snapshots,
-            "broker_name": None,
-            "has_paid": False,
-            "created_at": datetime.utcnow().isoformat(),
-            "updated_at": datetime.utcnow().isoformat(),
-        })
-
-        return {"brokerLinked": has_snapshots, "broker": None, "hasPaid": False}
+        return {"brokerLinked": False, "broker": None, "hasPaid": False}
 
     item = response["Item"]
     return {
@@ -481,7 +473,7 @@ async def get_onboarding_status(current_user: dict = Depends(get_current_user)):
 @app.post("/onboarding/select-broker")
 async def select_broker(
     request: BrokerSelectRequest,
-    current_user: dict = Depends(require_payment), 
+    current_user: dict = Depends(require_payment),
 ):
     table = get_onboarding_table()
     user_id = current_user["user_id"]
@@ -501,7 +493,7 @@ async def select_broker(
 @app.post("/onboarding/link-broker")
 async def link_broker(
     request: BrokerLinkRequest,
-    current_user: dict = Depends(require_payment), 
+    current_user: dict = Depends(require_payment),
 ):
     logger.info("/onboarding/link-broker called")
     user_id = current_user["user_id"]
@@ -625,7 +617,8 @@ async def get_my_strategies(current_user: dict = Depends(get_current_user)):
         wins = [t for t in trades if float(t.get("pnl", 0)) > 0]
         losses = [t for t in trades if float(t.get("pnl", 0)) < 0]
         win_rate = round((len(wins) / total) * 100, 2) if total else 0
-        avg_rr = round(sum(float(t.get("r_multiple", 0)) for t in trades) / total, 2) if total else 0
+        avg_rr = round(sum(float(t.get("r_multiple", 0))
+                       for t in trades) / total, 2) if total else 0
         total_pnl = round(sum(float(t.get("pnl", 0)) for t in trades), 2)
 
         enriched.append({
@@ -669,9 +662,11 @@ async def create_journal_entry(
         )
         return {"status": "success", "data": item}
     except table.meta.client.exceptions.ConditionalCheckFailedException:
-        raise HTTPException(status_code=409, detail="Journal entry already exists for this date")
+        raise HTTPException(
+            status_code=409, detail="Journal entry already exists for this date")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to create journal entry: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to create journal entry: {str(e)}")
 
 
 @app.get("/journal")
@@ -686,7 +681,8 @@ async def get_my_journals(current_user: dict = Depends(get_current_user)):
         )
         return {"status": "success", "data": response.get("Items", [])}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch journals: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to fetch journals: {str(e)}")
 
 
 # ─── Reports ──────────────────────────────────────────────────────────────────
@@ -721,7 +717,8 @@ async def get_reports_summary(current_user: dict = Depends(get_current_user)):
     active = max(symbols.items(), key=lambda x: x[1].get("trades", 0))
     win_rate = max(
         symbols.items(),
-        key=lambda x: (x[1]["wins"] / x[1]["trades"] if x[1].get("trades", 0) > 0 else 0),
+        key=lambda x: (x[1]["wins"] / x[1]["trades"]
+                       if x[1].get("trades", 0) > 0 else 0),
     )
 
     return {
