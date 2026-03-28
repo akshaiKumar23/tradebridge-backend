@@ -460,23 +460,7 @@ async def get_onboarding_status(current_user: dict = Depends(get_current_user)):
     response = table.get_item(Key={"user_id": user_id})
 
     if "Item" not in response:
-        snapshots_table = get_performance_snapshots_table()
-        snapshot_response = snapshots_table.query(
-            KeyConditionExpression=Key("user_id").eq(user_id),
-            Limit=1,
-        )
-        has_snapshots = len(snapshot_response.get("Items", [])) > 0
-
-        table.put_item(Item={
-            "user_id": user_id,
-            "broker_linked": has_snapshots,
-            "broker_name": None,
-            "has_paid": False,
-            "created_at": datetime.utcnow().isoformat(),
-            "updated_at": datetime.utcnow().isoformat(),
-        })
-
-        return {"brokerLinked": has_snapshots, "broker": None, "hasPaid": False}
+        return {"brokerLinked": False, "broker": None, "hasPaid": False}
 
     item = response["Item"]
     return {
