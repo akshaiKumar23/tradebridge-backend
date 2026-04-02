@@ -10,22 +10,24 @@ def fetch_mt5_analytics(server, login, password, days=None):
 
         # ---------------- INITIALIZE ----------------
 
-        mt5.shutdown()
-
         if not mt5.initialize():
+            mt5.shutdown()
             time.sleep(2)
             if not mt5.initialize():
                 return {
                     "status": "error",
-                    "message": str(mt5.last_error())
+                    "message": f"MT5 init failed: {mt5.last_error()}"
                 }
 
-        if not mt5.login(login=login, password=password, server=server):
-            mt5.shutdown()
-            return {
-                "status": "error",
-                "message": str(mt5.last_error())
-            }
+        # Only login if not already on the right account
+        account_info = mt5.account_info()
+        if account_info is None or account_info.login != login:
+            if not mt5.login(login=login, password=password, server=server):
+                mt5.shutdown()
+                return {
+                    "status": "error",
+                    "message": f"MT5 login failed: {mt5.last_error()}"
+                }
 
         account = mt5.account_info()
 
@@ -75,12 +77,12 @@ def fetch_mt5_analytics(server, login, password, days=None):
         start_time = (
             datetime.now() - timedelta(days=days)
             if days is not None
-            else datetime(2000, 1, 1)  
+            else datetime(2000, 1, 1)
         )
 
         deals = mt5.history_deals_get(
-            int(start_time.timestamp()),   
-            int(end_time.timestamp())     
+            int(start_time.timestamp()),
+            int(end_time.timestamp())
         ) or []
         deals = sorted(deals, key=lambda d: d.time)
 
