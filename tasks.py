@@ -25,7 +25,7 @@ from services.dashboard_equity_curve_store import save_dashboard_equity_curve
 
 
 @celery_app.task(name="tasks.get_account_summary", bind=True)
-def get_account_summary(self, user_id, server, login, password):
+def get_account_summary(self, user_id, server, login, password, days=None):
 
     print(f"\n{'='*60}")
     print(f"STARTING TASK FOR USER: {user_id}")
@@ -36,7 +36,7 @@ def get_account_summary(self, user_id, server, login, password):
     self.update_state(state="PROGRESS", meta={"step": "connecting_to_mt5"})
     print(f"Connecting with server={server}, login={login}, password=***")
 
-    result = fetch_mt5_analytics(server, login, password)
+    result = fetch_mt5_analytics(server, login, password,days=days)
     if result["status"] == "success":
         print(f"✓ MT5 connected successfully")
     else:

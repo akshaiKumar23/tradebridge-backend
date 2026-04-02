@@ -4,7 +4,7 @@ from collections import defaultdict
 import time
 
 
-def fetch_mt5_analytics(server, login, password):
+def fetch_mt5_analytics(server, login, password, days=None):
 
     try:
 
@@ -72,11 +72,20 @@ def fetch_mt5_analytics(server, login, password):
         # to datetime.now() to ensure all recent trades are captured
         # regardless of the timezone difference between the server and MT5
         end_time = datetime.now() + timedelta(hours=6)
+        start_time = (
+            datetime.now() - timedelta(days=days)
+            if days is not None
+            else datetime(2000, 1, 1)  
+        )
 
-        deals = mt5.history_deals_get(0, end_time) or []
+        deals = mt5.history_deals_get(
+            int(start_time.timestamp()),   
+            int(end_time.timestamp())     
+        ) or []
         deals = sorted(deals, key=lambda d: d.time)
 
-        print(f"\n=== FETCHING ALL HISTORY ===")
+        print(f"\n=== FETCHING {'ALL TIME' if days is None else f'LAST {days} DAYS'} ===")
+        print(f"From: {start_time.date()}  To: {end_time.date()}")
         print(f"Total deals fetched: {len(deals)}")
 
         # ---------------- GROUP BY POSITION ----------------

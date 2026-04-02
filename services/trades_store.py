@@ -1,5 +1,6 @@
 from decimal import Decimal
 import logging
+from boto3.dynamodb.conditions import Key
 from db.dynamodb import get_trades_table
 
 logger = logging.getLogger(__name__)
@@ -8,12 +9,36 @@ MIN_VALID_TIMESTAMP = 1577836800
 
 
 def save_user_trades(user_id: str, trades: list):
+    table = get_trades_table()
+
+    # Step 1: Delete all existing trades for this user
+    try:
+        existing = table.query(
+            KeyConditionExpression=Key("user_id").eq(user_id),
+            ProjectionExpression="user_id, #ts",
+            ExpressionAttributeNames={"#ts": "timestamp"},
+        )
+
+        with table.batch_writer() as batch:
+            for item in existing.get("Items", []):
+                batch.delete_item(Key={
+                    "user_id": item["user_id"],
+                    "timestamp": item["timestamp"],
+                })
+
+        logger.info(f"Deleted {len(existing.get('Items', []))} existing trades for user_id={user_id}")
+
+    except Exception as e:
+        logger.error(f"Failed to delete existing trades for user_id={user_id}: {e}")
+        raise
+
+    # Step 2: If no new trades, stop here
     if not trades:
         logger.warning(f"No trades to save for user_id={user_id}")
         return
 
-    table = get_trades_table()
-    seen_timestamps = {}  
+    # Step 3: Write the fresh trades
+    seen_timestamps = {}
     saved_count = 0
     skipped_invalid = 0
 
@@ -30,7 +55,6 @@ def save_user_trades(user_id: str, trades: list):
                 skipped_invalid += 1
                 continue
 
-            
             if timestamp in seen_timestamps:
                 seen_timestamps[timestamp] += 1
                 timestamp = timestamp + seen_timestamps[timestamp]
