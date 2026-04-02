@@ -1,101 +1,77 @@
 from decimal import Decimal
-from datetime import datetime, timedelta
+from datetime import datetime
 from collections import defaultdict
+from boto3.dynamodb.conditions import Key
 import logging
-
 from db.dynamodb import get_dashboard_session_performance_table
-
 
 logger = logging.getLogger(__name__)
 
 
 def get_session_from_timestamp(timestamp):
-
-    dt = datetime.fromtimestamp(timestamp)
-
-    hour = dt.hour
-
+    hour = datetime.fromtimestamp(timestamp).hour
     if 0 <= hour < 8:
         return "Asia"
-
     elif 8 <= hour < 16:
         return "London"
-
     else:
         return "New York"
 
 
-def save_dashboard_session_performance(
-    user_id: str,
-    trades: list
-):
-
+def save_dashboard_session_performance(user_id: str, trades: list):
     table = get_dashboard_session_performance_table()
 
-    sessions = defaultdict(lambda: defaultdict(float))
+    # Delete all existing rows for this user
+    items_to_delete = []
+    last_key = None
+    while True:
+        kwargs = {
+            "KeyConditionExpression": Key("user_id").eq(user_id),
+            "ProjectionExpression": "user_id, session_period",
+        }
+        if last_key:
+            kwargs["ExclusiveStartKey"] = last_key
+        response = table.query(**kwargs)
+        items_to_delete.extend(response.get("Items", []))
+        last_key = response.get("LastEvaluatedKey")
+        if not last_key:
+            break
 
+    with table.batch_writer() as batch:
+        for item in items_to_delete:
+            batch.delete_item(Key={
+                "user_id": item["user_id"],
+                "session_period": item["session_period"]
+            })
+
+    if not trades:
+        logger.warning(f"No trades for dashboard session performance user_id={user_id}")
+        return
+
+    sessions = defaultdict(lambda: defaultdict(float))
     now = datetime.utcnow()
 
     for trade in trades:
-
-        pnl = float(trade["pnl"])
-
-        close_time = datetime.fromtimestamp(
-            trade["close_time"]
-        )
-
-        session = get_session_from_timestamp(
-            trade["close_time"]
-        )
-
-        delta_days = (now - close_time).days
-
-        period_index = delta_days // 7
-
+        close_time = datetime.fromtimestamp(trade["close_time"])
+        session = get_session_from_timestamp(trade["close_time"])
+        period_index = (now - close_time).days // 7
         if period_index > 2:
             continue
-
-        sessions[session][period_index] += pnl
+        sessions[session][period_index] += float(trade["pnl"])
 
     try:
-
-        with table.batch_writer(
-            overwrite_by_pkeys=["user_id", "session_period"]
-        ) as batch:
-
+        with table.batch_writer() as batch:
             for session, periods in sessions.items():
-
                 for period_index, pnl in periods.items():
-
-                    session_period = f"{session}#{period_index}"
-
-                    item = {
-
+                    batch.put_item(Item={
                         "user_id": user_id,
-
-                        "session_period": session_period,
-
+                        "session_period": f"{session}#{period_index}",
                         "session": session,
-
                         "period_index": period_index,
-
-                        "pnl":
-                            Decimal(str(round(pnl, 2))),
-
-                        "created_at":
-                            datetime.utcnow().isoformat()
-                    }
-
-                    batch.put_item(Item=item)
-
-        logger.info(
-            f"Saved dashboard session performance for user_id={user_id}"
-        )
-
+                        "pnl": Decimal(str(round(pnl, 2))),
+                        "created_at": datetime.utcnow().isoformat()
+                    })
+        logger.info(f"Saved dashboard session performance for user_id={user_id}")
     except Exception as e:
-
-        logger.exception(
-            f"Failed saving dashboard session performance: {str(e)}"
-        )
-
+        logger.exception(f"Failed saving dashboard session performance: {str(e)}")
         raise

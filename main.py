@@ -11,7 +11,7 @@ from uuid import uuid4
 from datetime import datetime, timedelta
 from boto3.dynamodb.conditions import Key
 from decimal import Decimal
-
+from fastapi import Query
 from auth_dependency import get_current_user, verify_token_only
 from schemas.strategies import StrategyCreateRequest
 from db.dynamodb import get_performance_snapshots_table
@@ -393,8 +393,11 @@ async def get_task_result(
 
 
 @app.post("/account/sync")
-async def sync_account(current_user: dict = Depends(require_payment)):
-    logger.info("/account/sync called")
+async def sync_account(
+    days: int | None = Query(default=None, ge=1, le=365),
+    current_user: dict = Depends(require_payment),
+):
+    logger.info(f"/account/sync called with days={days}")
     user_id = current_user["user_id"]
 
     onboarding_table = get_onboarding_table()
@@ -409,18 +412,15 @@ async def sync_account(current_user: dict = Depends(require_payment)):
     if not item:
         raise HTTPException(status_code=400, detail="Broker not linked")
 
-    missing_fields = [k for k in [
-        "server", "login", "password"] if not item.get(k)]
+    missing_fields = [k for k in ["server", "login", "password"] if not item.get(k)]
     if missing_fields:
-        raise HTTPException(
-            status_code=400, detail="Broker credentials missing")
+        raise HTTPException(status_code=400, detail="Broker credentials missing")
 
     try:
         task = get_account_summary.apply_async(
-            args=[user_id, item["server"], int(
-                item["login"]), str(item["password"])]
+            args=[user_id, item["server"], int(item["login"]), str(item["password"]), days]
         )
-        logger.info(f"Celery sync task started: {task.id}")
+        logger.info(f"Celery sync task started: {task.id} for days={days}")
     except Exception as e:
         logger.error("Celery task creation failed", exc_info=True)
         raise HTTPException(status_code=500, detail="Task dispatch failed")
