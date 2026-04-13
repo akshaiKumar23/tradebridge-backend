@@ -45,33 +45,45 @@ def save_dashboard_session_performance(user_id: str, trades: list):
             })
 
     if not trades:
-        logger.warning(f"No trades for dashboard session performance user_id={user_id}")
+        logger.warning(
+            f"No trades for dashboard session performance user_id={user_id}")
         return
 
-    sessions = defaultdict(lambda: defaultdict(float))
-    now = datetime.utcnow()
+    # Aggregate total pnl, trade count, wins, losses per session
+    sessions = defaultdict(lambda: {
+        "pnl": 0.0,
+        "trades": 0,
+        "wins": 0,
+        "losses": 0
+    })
 
     for trade in trades:
-        close_time = datetime.fromtimestamp(trade["close_time"])
         session = get_session_from_timestamp(trade["close_time"])
-        period_index = (now - close_time).days // 7
-        if period_index > 2:
-            continue
-        sessions[session][period_index] += float(trade["pnl"])
+        pnl = float(trade["pnl"])
+        sessions[session]["pnl"] += pnl
+        sessions[session]["trades"] += 1
+        if pnl > 0:
+            sessions[session]["wins"] += 1
+        else:
+            sessions[session]["losses"] += 1
 
     try:
         with table.batch_writer() as batch:
-            for session, periods in sessions.items():
-                for period_index, pnl in periods.items():
-                    batch.put_item(Item={
-                        "user_id": user_id,
-                        "session_period": f"{session}#{period_index}",
-                        "session": session,
-                        "period_index": period_index,
-                        "pnl": Decimal(str(round(pnl, 2))),
-                        "created_at": datetime.utcnow().isoformat()
-                    })
-        logger.info(f"Saved dashboard session performance for user_id={user_id}")
+            for session, data in sessions.items():
+                batch.put_item(Item={
+                    "user_id": user_id,
+                    "session_period": session,
+                    "session": session,
+                    "period_index": 0,
+                    "pnl": Decimal(str(round(data["pnl"], 2))),
+                    "trades": data["trades"],
+                    "wins": data["wins"],
+                    "losses": data["losses"],
+                    "created_at": datetime.utcnow().isoformat()
+                })
+        logger.info(
+            f"Saved dashboard session performance for user_id={user_id}")
     except Exception as e:
-        logger.exception(f"Failed saving dashboard session performance: {str(e)}")
+        logger.exception(
+            f"Failed saving dashboard session performance: {str(e)}")
         raise

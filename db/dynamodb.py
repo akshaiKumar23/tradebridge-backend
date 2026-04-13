@@ -70,3 +70,9 @@ def get_dashboard_daily_pnl_table():
 
 def get_dashboard_equity_curve_table():
     return _dynamodb.Table("UserDashboardEquityCurve")
+
+def get_atlas_stats_table():
+    return _dynamodb.Table("UserAtlasStats")
+
+def get_atlas_prompts_table():
+    return _dynamodb.Table("AtlasPrompts")

@@ -22,7 +22,10 @@ from services.dashboard_session_performance_store import save_dashboard_session_
 from services.dashboard_symbol_performance_store import save_dashboard_symbol_performance
 from services.dashboard_daily_pnl_store import save_dashboard_daily_pnl
 from services.dashboard_equity_curve_store import save_dashboard_equity_curve
-
+from datetime import datetime, timedelta, timezone
+from db.dynamodb import get_atlas_stats_table
+from services.trading_data_compressor import TradingDataCompressor
+_atlas_compressor = TradingDataCompressor()
 
 @celery_app.task(name="tasks.get_account_summary", bind=True)
 def get_account_summary(self, user_id, server, login, password, days=None):
@@ -133,6 +136,36 @@ def get_account_summary(self, user_id, server, login, password, days=None):
     except Exception as e:
         print(f"ERROR in finalizing onboarding: {e}")
         raise
+
+      # ── STEP 6: Regenerate Atlas AI insights ─────────────────────────────────
+    print("\nSTEP 6: Checking Atlas insights...")
+    self.update_state(state="PROGRESS", meta={"step": "checking_atlas_insights"})
+    try:
+        atlas_table   = get_atlas_stats_table()
+        existing_item = atlas_table.get_item(Key={"user_id": user_id}).get("Item")
+ 
+        if existing_item:
+        
+            created_at = datetime.fromisoformat(existing_item["created_at"])
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+ 
+            age = datetime.now(timezone.utc) - created_at
+ 
+            if age < timedelta(hours=2):
+       
+                print(f" Atlas recent ({int(age.total_seconds() // 60)}m ago) — running lightweight check")
+            else:
+                print(f"Atlas stale ({int(age.total_seconds() // 3600)}h ago) — running full check")
+        else:
+            print("  🆕 No Atlas cache — first run")
+
+        _atlas_compressor.get_or_update_atlas_stats(user_id, prompt_type="universal")
+        print("  ✓ Atlas step complete")
+ 
+    except Exception as e:
+        # Non-fatal — a failed Atlas step must never roll back a successful sync
+        print(f"  ⚠ Atlas step failed (non-fatal): {e}")
 
     print(f"\n{'='*60}")
     print(f"TASK COMPLETED SUCCESSFULLY")
