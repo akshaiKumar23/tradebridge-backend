@@ -251,7 +251,7 @@ async def verify_payment(
     client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
     payment = client.payment.fetch(request.razorpay_payment_id)
 
-    if payment.get("amount") != 2000:
+    if payment.get("amount") != 299:
         raise HTTPException(status_code=400, detail="Incorrect payment amount")
 
     if payment.get("currency") != "USD":
