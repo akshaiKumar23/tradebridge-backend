@@ -29,6 +29,7 @@ from routers.analytics import router as analytics_router
 from routers.trades_router import router as trades_router
 from routers.dashboard_router import router as dashboard_router
 from routers.reports import router as reports_router
+from routers.atlas_router import router as atlas_router
 
 import logging
 
@@ -71,6 +72,7 @@ app.include_router(analytics_router)
 app.include_router(trades_router)
 app.include_router(dashboard_router)
 app.include_router(reports_router)
+app.include_router(atlas_router)
 
 
 # ─── Pydantic Models ────────────────────────────────────────────────────────
@@ -169,7 +171,7 @@ async def create_razorpay_order(current_user: dict = Depends(get_current_user)):
 
     client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
     order = client.order.create({
-        "amount": 2000,
+        "amount": 299,
         "currency": "USD",
         "receipt": user_id,
         "notes": {"user_id": user_id},
@@ -412,13 +414,16 @@ async def sync_account(
     if not item:
         raise HTTPException(status_code=400, detail="Broker not linked")
 
-    missing_fields = [k for k in ["server", "login", "password"] if not item.get(k)]
+    missing_fields = [k for k in [
+        "server", "login", "password"] if not item.get(k)]
     if missing_fields:
-        raise HTTPException(status_code=400, detail="Broker credentials missing")
+        raise HTTPException(
+            status_code=400, detail="Broker credentials missing")
 
     try:
         task = get_account_summary.apply_async(
-            args=[user_id, item["server"], int(item["login"]), str(item["password"]), days]
+            args=[user_id, item["server"], int(
+                item["login"]), str(item["password"]), days]
         )
         logger.info(f"Celery sync task started: {task.id} for days={days}")
     except Exception as e:
