@@ -30,6 +30,7 @@ from routers.trades_router import router as trades_router
 from routers.dashboard_router import router as dashboard_router
 from routers.reports import router as reports_router
 from routers.atlas_router import router as atlas_router
+from db.dynamodb import get_server_names_table
 
 import logging
 
@@ -764,3 +765,42 @@ async def get_last_sync(current_user: dict = Depends(get_current_user)):
 @app.get("/admin/users")
 async def list_all_users(admin_user: dict = Depends(get_admin_user)):
     return {"message": "Admin access granted", "admin": admin_user["username"]}
+
+
+BROKER_SERVER_PREFIX_MAP: dict[str, str | None] = {
+    "Exness":              "Exness",
+    "XM":                  "XMGlobal",
+    "Vantage":             "VantageInternational",
+    "WinProFX":            "Winprofx",
+    "cTrader":             None,
+    "TopstepX":            None,
+    "TradeLocker":         None,
+    "Interactive Brokers": None,
+    "MetaTrader 4":        None,
+    "MetaTrader 5":        None,
+    "Thinkorswim":         None,
+    "Tradovate":           None,
+}
+
+@app.get("/server-names")
+async def get_server_names(
+    broker: str = Query(..., description="Broker display name"),
+    current_user: dict = Depends(get_current_user),
+):
+    prefix = BROKER_SERVER_PREFIX_MAP.get(broker)
+
+    
+    if broker not in BROKER_SERVER_PREFIX_MAP or prefix is None:
+        return {"servers": []}
+
+    table = get_server_names_table()
+    response = table.scan()
+
+    servers = [
+        item["server_name"]
+        for item in response.get("Items", [])
+        if item.get("server_name", "").startswith(prefix)
+    ]
+
+    servers.sort()
+    return {"servers": servers}

@@ -76,3 +76,6 @@ def get_atlas_stats_table():
 
 def get_atlas_prompts_table():
     return _dynamodb.Table("AtlasPrompts")
+
+def get_server_names_table():
+    return _dynamodb.Table("ServerNames")
