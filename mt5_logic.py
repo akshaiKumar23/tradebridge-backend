@@ -216,10 +216,14 @@ def fetch_mt5_analytics(server, login, password, days=None):
                 "trade_id": int(position_id),
                 "entry_price": float(entry_deal.price) if entry_deal else 0,
                 "exit_price": float(exit_deal.price) if exit_deal else 0,
-                "direction": "LONG" if entry_deal.type == mt5.DEAL_TYPE_BUY else "SHORT",
+               "direction": (
+                    "LONG" if entry_deal and entry_deal.type == mt5.DEAL_TYPE_BUY else
+                    "SHORT" if entry_deal and entry_deal.type == mt5.DEAL_TYPE_SELL else
+                    "UNKNOWN"
+                ),
             })
 
-        # ---------------- METRICS ----------------
+        # ---------------- METRICS -------------------
 
         total_trades = len(trades_list)
         avg_win = sum(wins) / len(wins) if wins else 0
