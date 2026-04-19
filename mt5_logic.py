@@ -223,7 +223,7 @@ def fetch_mt5_analytics(server, login, password, days=None):
                 ),
             })
 
-        # ---------------- METRICS ----------------
+        # ---------------- METRICS -------------------
 
         total_trades = len(trades_list)
         avg_win = sum(wins) / len(wins) if wins else 0
