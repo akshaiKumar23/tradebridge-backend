@@ -31,6 +31,7 @@ from routers.dashboard_router import router as dashboard_router
 from routers.reports import router as reports_router
 from routers.atlas_router import router as atlas_router
 from db.dynamodb import get_server_names_table
+from routers.partners_router import router as partners_router
 
 import logging
 
@@ -74,6 +75,7 @@ app.include_router(trades_router)
 app.include_router(dashboard_router)
 app.include_router(reports_router)
 app.include_router(atlas_router)
+app.include_router(partners_router)
 
 
 # ─── Pydantic Models ────────────────────────────────────────────────────────
