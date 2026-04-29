@@ -1,5 +1,5 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 
 class WinproActivateRequest(BaseModel):
-    user_id: str
+    email: str
     winpro_account_id: str

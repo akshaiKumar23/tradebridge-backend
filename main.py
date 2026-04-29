@@ -464,17 +464,51 @@ async def get_new_trades(current_user: dict = Depends(get_current_user)):
 async def get_onboarding_status(current_user: dict = Depends(get_current_user)):
     table = get_onboarding_table()
     user_id = current_user["user_id"]
+    email = current_user["email"]
+    now = datetime.utcnow().isoformat()
+
+    logger.info(f"onboarding/status: user_id={user_id} email={email}")
 
     response = table.get_item(Key={"user_id": user_id})
 
     if "Item" not in response:
+        logger.info(f"onboarding/status: no item found for user_id={user_id}")
+
+        # Create a base record so email is stored for future WinProFX activation
+        if email:
+            table.put_item(Item={
+                "user_id":       user_id,
+                "email":         email,
+                "has_paid":      False,
+                "broker_linked": False,
+                "created_at":    now,
+                "updated_at":    now,
+            })
+            logger.info(
+                f"onboarding/status: created base record for {user_id} with email {email}")
+
         return {"brokerLinked": False, "broker": None, "hasPaid": False}
 
     item = response["Item"]
+    logger.info(
+        f"onboarding/status: item found, existing email={item.get('email')}")
+
+    # Backfill email if missing on existing record
+    if email and not item.get("email"):
+        table.update_item(
+            Key={"user_id": user_id},
+            UpdateExpression="SET email = :e, updated_at = :u",
+            ExpressionAttributeValues={
+                ":e": email,
+                ":u": now,
+            },
+        )
+        logger.info(f"Backfilled email for user {user_id}")
+
     return {
         "brokerLinked": item.get("broker_linked", False),
-        "broker": item.get("broker_name"),
-        "hasPaid": item.get("has_paid", False),
+        "broker":       item.get("broker_name"),
+        "hasPaid":      item.get("has_paid", False),
     }
 
 
@@ -784,6 +818,7 @@ BROKER_SERVER_PREFIX_MAP: dict[str, str | None] = {
     "Tradovate":           None,
 }
 
+
 @app.get("/server-names")
 async def get_server_names(
     broker: str = Query(..., description="Broker display name"),
@@ -791,7 +826,6 @@ async def get_server_names(
 ):
     prefix = BROKER_SERVER_PREFIX_MAP.get(broker)
 
-    
     if broker not in BROKER_SERVER_PREFIX_MAP or prefix is None:
         return {"servers": []}
 
