@@ -473,8 +473,6 @@ async def get_onboarding_status(current_user: dict = Depends(get_current_user)):
 
     if "Item" not in response:
         logger.info(f"onboarding/status: no item found for user_id={user_id}")
-
-        # Create a base record so email is stored for future WinProFX activation
         if email:
             table.put_item(Item={
                 "user_id":       user_id,
@@ -484,16 +482,13 @@ async def get_onboarding_status(current_user: dict = Depends(get_current_user)):
                 "created_at":    now,
                 "updated_at":    now,
             })
-            logger.info(
-                f"onboarding/status: created base record for {user_id} with email {email}")
-
+            logger.info(f"Created base record for {user_id} with email {email}")
         return {"brokerLinked": False, "broker": None, "hasPaid": False}
 
     item = response["Item"]
-    logger.info(
-        f"onboarding/status: item found, existing email={item.get('email')}")
+    logger.info(f"onboarding/status: item found, existing email={item.get('email')}")
 
-    # Backfill email if missing on existing record
+    # Backfill email if missing — ensures GSI works for WinProFX lookups
     if email and not item.get("email"):
         table.update_item(
             Key={"user_id": user_id},
