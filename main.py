@@ -311,7 +311,7 @@ async def razorpay_webhook(request: Request):
             return {"status": "ignored"}
 
         # Validate amount and currency
-        if payment.get("amount") != 2000 or payment.get("currency") != "USD":
+        if payment.get("amount") != 1499 or payment.get("currency") != "USD":
             logger.warning(
                 f"Webhook ignored: unexpected amount/currency for user {user_id}")
             return {"status": "ignored"}
