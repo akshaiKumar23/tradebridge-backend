@@ -29,7 +29,7 @@ async def winprofx_partner_activate(
     table = get_onboarding_table()
     now = datetime.utcnow().isoformat()
 
-    # Look up user by email via GSI
+    # Find user by email via GSI
     response = table.query(
         IndexName="email-index",
         KeyConditionExpression=Key("email").eq(body.email),
@@ -37,52 +37,32 @@ async def winprofx_partner_activate(
     )
     items = response.get("Items", [])
 
-    if items:
-        # User already exists — update their real record
-        item = items[0]
-        user_id = item["user_id"]
+    if not items:
+        raise HTTPException(status_code=404, detail="User not found")
 
-        if item.get("has_paid"):
-            return {"status": "already_activated"}
+    item = items[0]
+    user_id = item["user_id"]
 
-        table.update_item(
-            Key={"user_id": user_id},
-            UpdateExpression="""
-                SET has_paid = :p,
-                    paid_via = :via,
-                    winpro_account_id = :wid,
-                    paid_at = :pa,
-                    updated_at = :u
-            """,
-            ExpressionAttributeValues={
-                ":p":   True,
-                ":via": "winprofx_partner",
-                ":wid": body.winpro_account_id,
-                ":pa":  now,
-                ":u":   now,
-            },
-        )
-        logger.info(f"WinProFX activation: existing user {user_id} ({body.email}) marked as paid")
+    if item.get("has_paid"):
+        return {"status": "already_activated"}
 
-    else:
-        # User hasn't logged into your app yet — store pending placeholder
-        pending_key = f"pending#{body.email}"
-        existing_pending = table.get_item(Key={"user_id": pending_key}).get("Item")
+    table.update_item(
+        Key={"user_id": user_id},
+        UpdateExpression="""
+            SET has_paid = :p,
+                paid_via = :via,
+                winpro_account_id = :wid,
+                paid_at = :pa,
+                updated_at = :u
+        """,
+        ExpressionAttributeValues={
+            ":p":   True,
+            ":via": "winprofx_partner",
+            ":wid": body.winpro_account_id,
+            ":pa":  now,
+            ":u":   now,
+        },
+    )
 
-        if existing_pending and existing_pending.get("has_paid"):
-            return {"status": "already_activated"}
-
-        table.put_item(Item={
-            "user_id":           pending_key,
-            "email":             body.email,
-            "has_paid":          True,
-            "paid_via":          "winprofx_partner",
-            "winpro_account_id": body.winpro_account_id,
-            "broker_linked":     False,
-            "paid_at":           now,
-            "created_at":        now,
-            "updated_at":        now,
-        })
-        logger.info(f"WinProFX activation: pending record created for {body.email}")
-
+    logger.info(f"WinProFX activation: user {user_id} ({body.email}) marked as paid")
     return {"status": "success"}
