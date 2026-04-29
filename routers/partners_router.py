@@ -3,13 +3,12 @@ import hmac
 import logging
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
+from boto3.dynamodb.conditions import Key
 from db.dynamodb import get_onboarding_table
 from schemas.partners import WinproActivateRequest
 
 logger = logging.getLogger(__name__)
-
 router = APIRouter(prefix="/partner", tags=["partners"])
-
 WINPROFX_API_KEY = os.getenv("WINPROFX_API_KEY")
 
 
@@ -27,18 +26,25 @@ async def winprofx_partner_activate(
     request: Request,
     _: None = Depends(verify_winprofx_key),
 ):
-    user_id = body.user_id
     table = get_onboarding_table()
-
-    existing = table.get_item(Key={"user_id": user_id})
-    item = existing.get("Item", {})
-
-    if item.get("has_paid"):
-        return {"status": "already_activated"}
-
     now = datetime.utcnow().isoformat()
 
-    if item:
+    # Look up user by email via GSI
+    response = table.query(
+        IndexName="email-index",
+        KeyConditionExpression=Key("email").eq(body.email),
+        Limit=1,
+    )
+    items = response.get("Items", [])
+
+    if items:
+        # User already exists — update their real record
+        item = items[0]
+        user_id = item["user_id"]
+
+        if item.get("has_paid"):
+            return {"status": "already_activated"}
+
         table.update_item(
             Key={"user_id": user_id},
             UpdateExpression="""
@@ -56,9 +62,19 @@ async def winprofx_partner_activate(
                 ":u":   now,
             },
         )
+        logger.info(f"WinProFX activation: existing user {user_id} ({body.email}) marked as paid")
+
     else:
+        # User hasn't logged into your app yet — store pending placeholder
+        pending_key = f"pending#{body.email}"
+        existing_pending = table.get_item(Key={"user_id": pending_key}).get("Item")
+
+        if existing_pending and existing_pending.get("has_paid"):
+            return {"status": "already_activated"}
+
         table.put_item(Item={
-            "user_id":           user_id,
+            "user_id":           pending_key,
+            "email":             body.email,
             "has_paid":          True,
             "paid_via":          "winprofx_partner",
             "winpro_account_id": body.winpro_account_id,
@@ -67,6 +83,6 @@ async def winprofx_partner_activate(
             "created_at":        now,
             "updated_at":        now,
         })
+        logger.info(f"WinProFX activation: pending record created for {body.email}")
 
-    logger.info(f"WinProFX partner activation: user {user_id} marked as paid")
     return {"status": "success"}
