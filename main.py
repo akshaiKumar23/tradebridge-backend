@@ -174,7 +174,7 @@ async def create_razorpay_order(current_user: dict = Depends(get_current_user)):
 
     client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
     order = client.order.create({
-        "amount": 299,
+        "amount": 1499,
         "currency": "USD",
         "receipt": user_id,
         "notes": {"user_id": user_id},
@@ -254,7 +254,7 @@ async def verify_payment(
     client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
     payment = client.payment.fetch(request.razorpay_payment_id)
 
-    if payment.get("amount") != 299:
+    if payment.get("amount") != 1499:
         raise HTTPException(status_code=400, detail="Incorrect payment amount")
 
     if payment.get("currency") != "USD":
