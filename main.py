@@ -159,30 +159,33 @@ async def get_current_user_info(current_user: dict = Depends(get_current_user)):
 
 # ─── Payment ──────────────────────────────────────────────────────────────────
 
-@app.post("/payment/create-order")
 async def create_razorpay_order(current_user: dict = Depends(get_current_user)):
+    """
+    Creates a Razorpay order for ₹1,300 (INR).
+    Returns already_paid=True if user has already paid (idempotent).
+    """
     import razorpay
-
+ 
     user_id = current_user["user_id"]
     table = get_onboarding_table()
-
-    # Idempotency — already paid
+ 
+    # Idempotency — already paid, skip order creation
     existing = table.get_item(Key={"user_id": user_id})
     item = existing.get("Item", {})
     if item.get("has_paid"):
         return {"already_paid": True}
-
+ 
     client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
     order = client.order.create({
-        "amount": 1499,
-        "currency": "USD",
-        "receipt": user_id,
-        "notes": {"user_id": user_id},
+        "amount":   AMOUNT_PAISE,   # 130000 paise = ₹1,300
+        "currency": CURRENCY,       # "INR"
+        "receipt":  user_id,
+        "notes":    {"user_id": user_id},
     })
-
+ 
     now = datetime.utcnow().isoformat()
-
-    # Store order ID + creation timestamp before checkout starts (replay attack prevention)
+ 
+    # Store order ID + timestamp before checkout starts (replay attack prevention)
     if item:
         table.update_item(
             Key={"user_id": user_id},
@@ -190,154 +193,174 @@ async def create_razorpay_order(current_user: dict = Depends(get_current_user)):
             ExpressionAttributeValues={
                 ":oid": order["id"],
                 ":oca": now,
-                ":u": now,
+                ":u":   now,
             },
         )
     else:
         table.put_item(Item={
-            "user_id": user_id,
-            "razorpay_order_id": order["id"],
-            "order_created_at": now,
-            "has_paid": False,
-            "broker_linked": False,
-            "created_at": now,
-            "updated_at": now,
+            "user_id":            user_id,
+            "razorpay_order_id":  order["id"],
+            "order_created_at":   now,
+            "has_paid":           False,
+            "broker_linked":      False,
+            "created_at":         now,
+            "updated_at":         now,
         })
-
+ 
     return {
-        "order_id": order["id"],
-        "amount": order["amount"],
-        "currency": order["currency"],
+        "order_id":    order["id"],
+        "amount":      order["amount"],    # 130000
+        "currency":    order["currency"],  # "INR"
         "already_paid": False,
     }
-
-
-@app.post("/payment/verify")
+ 
+ 
+# ─── POST /payment/verify ─────────────────────────────────────────────────────
+ 
 async def verify_payment(
     request: PaymentVerifyRequest,
     current_user: dict = Depends(get_current_user),
 ):
+    """
+    Verifies Razorpay signature + fetches payment from Razorpay API
+    to confirm amount (₹1,300), currency (INR), and captured status
+    before marking user as paid.
+    """
     import razorpay
-
+ 
     user_id = current_user["user_id"]
-    table = get_onboarding_table()
-
+    table   = get_onboarding_table()
+ 
     existing = table.get_item(Key={"user_id": user_id})
-    item = existing.get("Item", {})
-
+    item     = existing.get("Item", {})
+ 
+    # Already paid — idempotent
     if item.get("has_paid"):
         return {"status": "already_paid"}
-
+ 
+    # Order ID must match what we issued
     stored_order_id = item.get("razorpay_order_id")
     if not stored_order_id or stored_order_id != request.razorpay_order_id:
         raise HTTPException(status_code=400, detail="Order ID mismatch")
-
+ 
+    # Order must not be older than 30 minutes
     order_created_at = item.get("order_created_at")
     if order_created_at:
         order_time = datetime.fromisoformat(order_created_at)
         if datetime.utcnow() - order_time > timedelta(minutes=30):
-            raise HTTPException(
-                status_code=400, detail="Order expired. Please try again.")
-
-    body = f"{request.razorpay_order_id}|{request.razorpay_payment_id}"
+            raise HTTPException(status_code=400, detail="Order expired. Please try again.")
+ 
+    # ── HMAC signature verification ──────────────────────────────────────────
+    body     = f"{request.razorpay_order_id}|{request.razorpay_payment_id}"
     expected = hmac.new(
         RAZORPAY_KEY_SECRET.encode(),
         body.encode(),
         hashlib.sha256,
     ).hexdigest()
-
+ 
     if not hmac.compare_digest(expected, request.razorpay_signature):
-        raise HTTPException(
-            status_code=400, detail="Invalid payment signature")
-
-    # Fetch payment from Razorpay and validate amount, currency, and captured status
-    client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+        raise HTTPException(status_code=400, detail="Invalid payment signature")
+ 
+    # ── Fetch payment from Razorpay and validate amount / currency / status ──
+    client  = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
     payment = client.payment.fetch(request.razorpay_payment_id)
-
-    if payment.get("amount") != 1499:
+ 
+    if payment.get("amount") != AMOUNT_PAISE:
         raise HTTPException(status_code=400, detail="Incorrect payment amount")
-
-    if payment.get("currency") != "USD":
+ 
+    if payment.get("currency") != CURRENCY:
         raise HTTPException(status_code=400, detail="Invalid currency")
-
+ 
     if payment.get("status") != "captured":
         raise HTTPException(status_code=400, detail="Payment not captured")
-
-    # Mark paid
+ 
+    # ── Mark user as paid ────────────────────────────────────────────────────
     now = datetime.utcnow().isoformat()
     table.update_item(
         Key={"user_id": user_id},
         UpdateExpression="""
-            SET has_paid = :p,
-                payment_id = :pid,
-                paid_at = :pa,
-                updated_at = :u
+            SET has_paid    = :p,
+                payment_id  = :pid,
+                paid_at     = :pa,
+                updated_at  = :u
         """,
         ExpressionAttributeValues={
-            ":p": True,
+            ":p":   True,
             ":pid": request.razorpay_payment_id,
-            ":pa": now,
-            ":u": now,
+            ":pa":  now,
+            ":u":   now,
         },
     )
-
+ 
+    logger.info(f"Payment verified: user {user_id} payment {request.razorpay_payment_id}")
     return {"status": "success"}
-
-
-@app.post("/payment/webhook")
+ 
+ 
+# ─── POST /payment/webhook ────────────────────────────────────────────────────
+ 
 async def razorpay_webhook(request: Request):
-    body = await request.body()
+    """
+    Razorpay webhook handler for payment.captured events.
+    Acts as a fallback if the client-side verify call fails
+    (e.g. user closes browser after payment).
+ 
+    Configure in Razorpay Dashboard → Webhooks:
+      URL:    https://yourdomain.com/payment/webhook
+      Events: payment.captured
+    """
+    body      = await request.body()
     signature = request.headers.get("X-Razorpay-Signature", "")
-
-    # Constant-time signature verification
+ 
+    # Constant-time HMAC verification using webhook secret
     expected = hmac.new(
         RAZORPAY_WEBHOOK_SECRET.encode(),
         body,
         hashlib.sha256,
     ).hexdigest()
-
+ 
     if not hmac.compare_digest(expected, signature):
-        raise HTTPException(
-            status_code=400, detail="Invalid webhook signature")
-
+        raise HTTPException(status_code=400, detail="Invalid webhook signature")
+ 
     payload = json.loads(body)
-    event = payload.get("event")
-
+    event   = payload.get("event")
+ 
     if event == "payment.captured":
         payment = payload["payload"]["payment"]["entity"]
         user_id = payment.get("notes", {}).get("user_id")
-
+ 
         if not user_id:
             return {"status": "ignored"}
-
-        # Validate amount and currency
-        if payment.get("amount") != 1499 or payment.get("currency") != "USD":
+ 
+        # Validate amount and currency match expected values
+        if payment.get("amount") != AMOUNT_PAISE or payment.get("currency") != CURRENCY:
             logger.warning(
-                f"Webhook ignored: unexpected amount/currency for user {user_id}")
+                f"Webhook ignored: unexpected amount/currency for user {user_id} "
+                f"— got {payment.get('amount')} {payment.get('currency')}"
+            )
             return {"status": "ignored"}
-
+ 
         table = get_onboarding_table()
-
-        # Duplicate webhook protection — check before writing
+ 
+        # Duplicate webhook protection — read before write
         existing = table.get_item(Key={"user_id": user_id})
         if existing.get("Item", {}).get("has_paid"):
             return {"status": "already_processed"}
-
+ 
         now = datetime.utcnow().isoformat()
         table.update_item(
             Key={"user_id": user_id},
             UpdateExpression="SET has_paid = :p, payment_id = :pid, paid_at = :pa, updated_at = :u",
             ExpressionAttributeValues={
-                ":p": True,
+                ":p":   True,
                 ":pid": payment["id"],
-                ":pa": now,
-                ":u": now,
+                ":pa":  now,
+                ":u":   now,
             },
         )
-        logger.info(f"Webhook: user {user_id} marked as paid via webhook")
-
+        logger.info(f"Webhook: user {user_id} marked as paid via webhook (payment {payment['id']})")
+ 
     return {"status": "ok"}
-
+ 
 
 # ─── Account ─────────────────────────────────────────────────────────────────
 
