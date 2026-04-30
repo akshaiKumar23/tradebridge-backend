@@ -47,6 +47,12 @@ RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID")
 RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET")
 RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET")
 
+# ─── Payment constants (single source of truth) ───────────────────────────────
+#  UI shows: $14.99
+#  Charged:  ₹1,300 in paise → 130000
+#  Currency: INR
+AMOUNT_PAISE = 130000
+CURRENCY = "INR"
 
 logger.info(
     f"Razorpay Key ID loaded: {RAZORPAY_KEY_ID[:8] if RAZORPAY_KEY_ID else 'MISSING'}")
@@ -78,7 +84,7 @@ app.include_router(atlas_router)
 app.include_router(partners_router)
 
 
-# ─── Pydantic Models ────────────────────────────────────────────────────────
+# ─── Pydantic Models ──────────────────────────────────────────────────────────
 
 class BrokerSelectRequest(BaseModel):
     broker: str
@@ -96,7 +102,7 @@ class PaymentVerifyRequest(BaseModel):
     razorpay_signature: str
 
 
-# ─── Utilities ──────────────────────────────────────────────────────────────
+# ─── Utilities ────────────────────────────────────────────────────────────────
 
 def decimal_to_float(obj):
     if isinstance(obj, Decimal):
@@ -104,10 +110,9 @@ def decimal_to_float(obj):
     return obj
 
 
-# ─── Dependencies ────────────────────────────────────────────────────────────
+# ─── Dependencies ─────────────────────────────────────────────────────────────
 
 async def require_payment(current_user: dict = Depends(get_current_user)):
-
     table = get_onboarding_table()
     response = table.get_item(Key={"user_id": current_user["user_id"]})
     item = response.get("Item", {})
@@ -151,30 +156,27 @@ async def health_check():
 @app.get("/me")
 async def get_current_user_info(current_user: dict = Depends(get_current_user)):
     return {
-        "user_id": current_user["user_id"],
-        "email": current_user["email"],
+        "user_id":  current_user["user_id"],
+        "email":    current_user["email"],
         "username": current_user["username"],
     }
 
 
 # ─── Payment ──────────────────────────────────────────────────────────────────
 
+@app.post("/payment/create-order")
 async def create_razorpay_order(current_user: dict = Depends(get_current_user)):
-    """
-    Creates a Razorpay order for ₹1,300 (INR).
-    Returns already_paid=True if user has already paid (idempotent).
-    """
     import razorpay
- 
+
     user_id = current_user["user_id"]
     table = get_onboarding_table()
- 
-    # Idempotency — already paid, skip order creation
+
+    # Idempotency — already paid
     existing = table.get_item(Key={"user_id": user_id})
     item = existing.get("Item", {})
     if item.get("has_paid"):
         return {"already_paid": True}
- 
+
     client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
     order = client.order.create({
         "amount":   AMOUNT_PAISE,   # 130000 paise = ₹1,300
@@ -182,10 +184,10 @@ async def create_razorpay_order(current_user: dict = Depends(get_current_user)):
         "receipt":  user_id,
         "notes":    {"user_id": user_id},
     })
- 
+
     now = datetime.utcnow().isoformat()
- 
-    # Store order ID + timestamp before checkout starts (replay attack prevention)
+
+    # Store order ID + creation timestamp before checkout starts (replay attack prevention)
     if item:
         table.update_item(
             Key={"user_id": user_id},
@@ -198,91 +200,87 @@ async def create_razorpay_order(current_user: dict = Depends(get_current_user)):
         )
     else:
         table.put_item(Item={
-            "user_id":            user_id,
-            "razorpay_order_id":  order["id"],
-            "order_created_at":   now,
-            "has_paid":           False,
-            "broker_linked":      False,
-            "created_at":         now,
-            "updated_at":         now,
+            "user_id":           user_id,
+            "razorpay_order_id": order["id"],
+            "order_created_at":  now,
+            "has_paid":          False,
+            "broker_linked":     False,
+            "created_at":        now,
+            "updated_at":        now,
         })
- 
+
     return {
         "order_id":    order["id"],
         "amount":      order["amount"],    # 130000
         "currency":    order["currency"],  # "INR"
         "already_paid": False,
     }
- 
- 
-# ─── POST /payment/verify ─────────────────────────────────────────────────────
- 
+
+
+@app.post("/payment/verify")
 async def verify_payment(
     request: PaymentVerifyRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    """
-    Verifies Razorpay signature + fetches payment from Razorpay API
-    to confirm amount (₹1,300), currency (INR), and captured status
-    before marking user as paid.
-    """
     import razorpay
- 
+
     user_id = current_user["user_id"]
-    table   = get_onboarding_table()
- 
+    table = get_onboarding_table()
+
     existing = table.get_item(Key={"user_id": user_id})
-    item     = existing.get("Item", {})
- 
+    item = existing.get("Item", {})
+
     # Already paid — idempotent
     if item.get("has_paid"):
         return {"status": "already_paid"}
- 
+
     # Order ID must match what we issued
     stored_order_id = item.get("razorpay_order_id")
     if not stored_order_id or stored_order_id != request.razorpay_order_id:
         raise HTTPException(status_code=400, detail="Order ID mismatch")
- 
+
     # Order must not be older than 30 minutes
     order_created_at = item.get("order_created_at")
     if order_created_at:
         order_time = datetime.fromisoformat(order_created_at)
         if datetime.utcnow() - order_time > timedelta(minutes=30):
-            raise HTTPException(status_code=400, detail="Order expired. Please try again.")
- 
-    # ── HMAC signature verification ──────────────────────────────────────────
-    body     = f"{request.razorpay_order_id}|{request.razorpay_payment_id}"
+            raise HTTPException(
+                status_code=400, detail="Order expired. Please try again.")
+
+    # HMAC signature verification
+    body = f"{request.razorpay_order_id}|{request.razorpay_payment_id}"
     expected = hmac.new(
         RAZORPAY_KEY_SECRET.encode(),
         body.encode(),
         hashlib.sha256,
     ).hexdigest()
- 
+
     if not hmac.compare_digest(expected, request.razorpay_signature):
-        raise HTTPException(status_code=400, detail="Invalid payment signature")
- 
-    # ── Fetch payment from Razorpay and validate amount / currency / status ──
-    client  = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+        raise HTTPException(
+            status_code=400, detail="Invalid payment signature")
+
+    # Fetch payment from Razorpay and validate amount, currency, captured status
+    client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
     payment = client.payment.fetch(request.razorpay_payment_id)
- 
+
     if payment.get("amount") != AMOUNT_PAISE:
         raise HTTPException(status_code=400, detail="Incorrect payment amount")
- 
+
     if payment.get("currency") != CURRENCY:
         raise HTTPException(status_code=400, detail="Invalid currency")
- 
+
     if payment.get("status") != "captured":
         raise HTTPException(status_code=400, detail="Payment not captured")
- 
-    # ── Mark user as paid ────────────────────────────────────────────────────
+
+    # Mark paid
     now = datetime.utcnow().isoformat()
     table.update_item(
         Key={"user_id": user_id},
         UpdateExpression="""
-            SET has_paid    = :p,
-                payment_id  = :pid,
-                paid_at     = :pa,
-                updated_at  = :u
+            SET has_paid   = :p,
+                payment_id = :pid,
+                paid_at    = :pa,
+                updated_at = :u
         """,
         ExpressionAttributeValues={
             ":p":   True,
@@ -291,61 +289,53 @@ async def verify_payment(
             ":u":   now,
         },
     )
- 
-    logger.info(f"Payment verified: user {user_id} payment {request.razorpay_payment_id}")
+
+    logger.info(
+        f"Payment verified: user {user_id} payment {request.razorpay_payment_id}")
     return {"status": "success"}
- 
- 
-# ─── POST /payment/webhook ────────────────────────────────────────────────────
- 
+
+
+@app.post("/payment/webhook")
 async def razorpay_webhook(request: Request):
-    """
-    Razorpay webhook handler for payment.captured events.
-    Acts as a fallback if the client-side verify call fails
-    (e.g. user closes browser after payment).
- 
-    Configure in Razorpay Dashboard → Webhooks:
-      URL:    https://yourdomain.com/payment/webhook
-      Events: payment.captured
-    """
-    body      = await request.body()
+    body = await request.body()
     signature = request.headers.get("X-Razorpay-Signature", "")
- 
-    # Constant-time HMAC verification using webhook secret
+
+    # Constant-time signature verification
     expected = hmac.new(
         RAZORPAY_WEBHOOK_SECRET.encode(),
         body,
         hashlib.sha256,
     ).hexdigest()
- 
+
     if not hmac.compare_digest(expected, signature):
-        raise HTTPException(status_code=400, detail="Invalid webhook signature")
- 
+        raise HTTPException(
+            status_code=400, detail="Invalid webhook signature")
+
     payload = json.loads(body)
-    event   = payload.get("event")
- 
+    event = payload.get("event")
+
     if event == "payment.captured":
         payment = payload["payload"]["payment"]["entity"]
         user_id = payment.get("notes", {}).get("user_id")
- 
+
         if not user_id:
             return {"status": "ignored"}
- 
-        # Validate amount and currency match expected values
+
+        # Validate amount and currency
         if payment.get("amount") != AMOUNT_PAISE or payment.get("currency") != CURRENCY:
             logger.warning(
                 f"Webhook ignored: unexpected amount/currency for user {user_id} "
                 f"— got {payment.get('amount')} {payment.get('currency')}"
             )
             return {"status": "ignored"}
- 
+
         table = get_onboarding_table()
- 
-        # Duplicate webhook protection — read before write
+
+        # Duplicate webhook protection — check before writing
         existing = table.get_item(Key={"user_id": user_id})
         if existing.get("Item", {}).get("has_paid"):
             return {"status": "already_processed"}
- 
+
         now = datetime.utcnow().isoformat()
         table.update_item(
             Key={"user_id": user_id},
@@ -357,12 +347,13 @@ async def razorpay_webhook(request: Request):
                 ":u":   now,
             },
         )
-        logger.info(f"Webhook: user {user_id} marked as paid via webhook (payment {payment['id']})")
- 
-    return {"status": "ok"}
- 
+        logger.info(
+            f"Webhook: user {user_id} marked as paid via webhook (payment {payment['id']})")
 
-# ─── Account ─────────────────────────────────────────────────────────────────
+    return {"status": "ok"}
+
+
+# ─── Account ──────────────────────────────────────────────────────────────────
 
 @app.post("/account/summary")
 async def request_account_summary(
@@ -404,15 +395,15 @@ async def get_task_result(
         if stats:
             item = stats[0]
             analytics = {
-                "total_pnl": decimal_to_float(item["total_pnl"]),
-                "total_trades": decimal_to_float(item["total_trades"]),
-                "wins": decimal_to_float(item["wins"]),
-                "losses": decimal_to_float(item["losses"]),
-                "win_rate": decimal_to_float(item["win_rate"]),
+                "total_pnl":     decimal_to_float(item["total_pnl"]),
+                "total_trades":  decimal_to_float(item["total_trades"]),
+                "wins":          decimal_to_float(item["wins"]),
+                "losses":        decimal_to_float(item["losses"]),
+                "win_rate":      decimal_to_float(item["win_rate"]),
                 "profit_factor": decimal_to_float(item["profit_factor"]),
-                "expectancy": decimal_to_float(item["expectancy"]),
-                "avg_win": decimal_to_float(item["avg_win"]),
-                "avg_loss": decimal_to_float(item["avg_loss"]),
+                "expectancy":    decimal_to_float(item["expectancy"]),
+                "avg_win":       decimal_to_float(item["avg_win"]),
+                "avg_loss":      decimal_to_float(item["avg_loss"]),
             }
 
         return {"status": "success", "sync": result, "analytics_stats": analytics}
@@ -473,9 +464,9 @@ async def get_new_trades(current_user: dict = Depends(get_current_user)):
         if "unreviewed" in item.get("tags", []):
             new_trades.append({
                 "timestamp": decimal_to_float(item["timestamp"]),
-                "symbol": item.get("symbol"),
-                "pnl": float(item["pnl"]),
-                "volume": float(item["volume"]),
+                "symbol":    item.get("symbol"),
+                "pnl":       float(item["pnl"]),
+                "volume":    float(item["volume"]),
             })
 
     return {"status": "success", "data": new_trades}
@@ -505,11 +496,13 @@ async def get_onboarding_status(current_user: dict = Depends(get_current_user)):
                 "created_at":    now,
                 "updated_at":    now,
             })
-            logger.info(f"Created base record for {user_id} with email {email}")
+            logger.info(
+                f"Created base record for {user_id} with email {email}")
         return {"brokerLinked": False, "broker": None, "hasPaid": False}
 
     item = response["Item"]
-    logger.info(f"onboarding/status: item found, existing email={item.get('email')}")
+    logger.info(
+        f"onboarding/status: item found, existing email={item.get('email')}")
 
     # Backfill email if missing — ensures GSI works for WinProFX lookups
     if email and not item.get("email"):
@@ -542,8 +535,8 @@ async def select_broker(
         Key={"user_id": user_id},
         UpdateExpression="SET broker_name = :broker, broker_linked = :linked, updated_at = :updated",
         ExpressionAttributeValues={
-            ":broker": request.broker,
-            ":linked": False,
+            ":broker":  request.broker,
+            ":linked":  False,
             ":updated": datetime.utcnow().isoformat(),
         },
     )
@@ -578,32 +571,32 @@ async def link_broker(
             onboarding_table.update_item(
                 Key={"user_id": user_id},
                 UpdateExpression="""
-                    SET broker_name = :b,
-                        server = :s,
-                        login = :l,
-                        password = :p,
+                    SET broker_name   = :b,
+                        server        = :s,
+                        login         = :l,
+                        password      = :p,
                         broker_linked = :bl,
-                        updated_at = :u
+                        updated_at    = :u
                 """,
                 ExpressionAttributeValues={
-                    ":b": request.broker,
-                    ":s": request.server,
-                    ":l": request.login,
-                    ":p": request.password,
+                    ":b":  request.broker,
+                    ":s":  request.server,
+                    ":l":  request.login,
+                    ":p":  request.password,
                     ":bl": False,
-                    ":u": now,
+                    ":u":  now,
                 },
             )
         else:
             onboarding_table.put_item(Item={
-                "user_id": user_id,
-                "broker_name": request.broker,
-                "server": request.server,
-                "login": request.login,
-                "password": request.password,
+                "user_id":      user_id,
+                "broker_name":  request.broker,
+                "server":       request.server,
+                "login":        request.login,
+                "password":     request.password,
                 "broker_linked": False,
-                "created_at": now,
-                "updated_at": now,
+                "created_at":   now,
+                "updated_at":   now,
             })
     except Exception as e:
         logger.error("DynamoDB write failed", exc_info=True)
@@ -629,15 +622,15 @@ async def create_strategy(
     strategy_id = str(uuid4())
 
     strategy_item = {
-        "user_id": user_id,
+        "user_id":     user_id,
         "strategy_id": strategy_id,
-        "title": request.title,
+        "title":       request.title,
         "description": request.description,
-        "rules": request.rules,
-        "win_rate": request.win_rate,
-        "avg_rr": request.avg_rr,
-        "trades": request.trades,
-        "created_at": datetime.utcnow().isoformat(),
+        "rules":       request.rules,
+        "win_rate":    request.win_rate,
+        "avg_rr":      request.avg_rr,
+        "trades":      request.trades,
+        "created_at":  datetime.utcnow().isoformat(),
     }
 
     strategies_table.put_item(Item=strategy_item)
@@ -676,6 +669,7 @@ async def get_my_strategies(current_user: dict = Depends(get_current_user)):
         total = len(trades)
         wins = [t for t in trades if float(t.get("pnl", 0)) > 0]
         losses = [t for t in trades if float(t.get("pnl", 0)) < 0]
+
         win_rate = round((len(wins) / total) * 100, 2) if total else 0
         avg_rr = round(sum(float(t.get("r_multiple", 0))
                        for t in trades) / total, 2) if total else 0
@@ -683,11 +677,11 @@ async def get_my_strategies(current_user: dict = Depends(get_current_user)):
 
         enriched.append({
             **{k: (float(v) if isinstance(v, Decimal) else v) for k, v in strategy.items()},
-            "trades": total,
-            "wins": len(wins),
-            "losses": len(losses),
-            "win_rate": win_rate,
-            "avg_rr": avg_rr,
+            "trades":    total,
+            "wins":      len(wins),
+            "losses":    len(losses),
+            "win_rate":  win_rate,
+            "avg_rr":    avg_rr,
             "total_pnl": total_pnl,
         })
 
@@ -705,14 +699,14 @@ async def create_journal_entry(
     user_id = current_user["user_id"]
 
     item = {
-        "user_id": user_id,
-        "journal_date": request.date,
-        "pnl": Decimal(str(request.pnl)),
-        "trades": Decimal(request.trades),
+        "user_id":         user_id,
+        "journal_date":    request.date,
+        "pnl":             Decimal(str(request.pnl)),
+        "trades":          Decimal(request.trades),
         "session_quality": Decimal(request.session_quality),
-        "notes": request.notes,
-        "learnings": request.learnings,
-        "created_at": datetime.utcnow().isoformat(),
+        "notes":           request.notes,
+        "learnings":       request.learnings,
+        "created_at":      datetime.utcnow().isoformat(),
     }
 
     try:
@@ -766,10 +760,10 @@ async def get_reports_summary(current_user: dict = Depends(get_current_user)):
 
     if not symbols:
         return {
-            "best_performing_symbol": None,
+            "best_performing_symbol":  None,
             "worst_performing_symbol": None,
-            "most_active_symbol": None,
-            "best_win_rate_symbol": None,
+            "most_active_symbol":      None,
+            "best_win_rate_symbol":    None,
         }
 
     best = max(symbols.items(), key=lambda x: x[1].get("pnl", 0))
@@ -782,13 +776,13 @@ async def get_reports_summary(current_user: dict = Depends(get_current_user)):
     )
 
     return {
-        "best_performing_symbol": {"symbol": best[0], "pnl": float(best[1].get("pnl", 0)), "trades": int(best[1].get("trades", 0))},
-        "worst_performing_symbol": {"symbol": worst[0], "pnl": float(worst[1].get("pnl", 0)), "trades": int(worst[1].get("trades", 0))},
-        "most_active_symbol": {"symbol": active[0], "trades": int(active[1].get("trades", 0))},
+        "best_performing_symbol":  {"symbol": best[0],     "pnl": float(best[1].get("pnl", 0)),   "trades": int(best[1].get("trades", 0))},
+        "worst_performing_symbol": {"symbol": worst[0],    "pnl": float(worst[1].get("pnl", 0)),  "trades": int(worst[1].get("trades", 0))},
+        "most_active_symbol":      {"symbol": active[0],   "trades": int(active[1].get("trades", 0))},
         "best_win_rate_symbol": {
-            "symbol": win_rate[0],
+            "symbol":   win_rate[0],
             "win_rate": round((win_rate[1]["wins"] / win_rate[1]["trades"]) * 100, 2),
-            "trades": int(win_rate[1]["trades"]),
+            "trades":   int(win_rate[1]["trades"]),
         },
     }
 
