@@ -64,12 +64,26 @@ app = FastAPI(
     description="Secure API for MT5 data processing and trading journals protected by AWS Cognito"
 )
 
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=[
+#         "http://localhost:5173",
+#         "http://localhost:5174",
+#         os.getenv("FRONTEND_URL", "http://localhost:5173")
+#     ],
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+# )
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
         "http://localhost:5174",
-        os.getenv("FRONTEND_URL", "http://localhost:5173")
+        "https://www.journalpips.com",
+        "https://journalpips.com",
+        "https://l.instagram.com",
     ],
     allow_credentials=True,
     allow_methods=["*"],
