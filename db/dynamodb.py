@@ -2,9 +2,17 @@ import boto3
 import os
 
 
+from botocore.config import Config
+
+boto_config = Config(
+    max_pool_connections=25,
+    retries={"max_attempts": 2, "mode": "standard"}
+)
+
 _dynamodb = boto3.resource(
     "dynamodb",
     region_name=os.getenv("AWS_REGION", "ap-south-1"),
+    config=boto_config,
 )
 
 

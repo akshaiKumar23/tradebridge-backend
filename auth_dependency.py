@@ -5,16 +5,26 @@ from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials
 from auth import security, cognito_verifier
 
+from botocore.config import Config
+
 logger = logging.getLogger(__name__)
 
+boto_config = Config(
+    max_pool_connections=25,
+    retries={"max_attempts": 2, "mode": "standard"}
+)
+
 cognito_client = boto3.client(
-    "cognito-idp", region_name=os.getenv("AWS_REGION"))
+    "cognito-idp",
+    region_name=os.getenv("AWS_REGION", "ap-south-1"),
+    config=boto_config
+)
 
 # Simple in-memory cache to avoid calling Cognito on every request
 _email_cache: dict = {}
 
 
-async def get_current_user(
+def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ) -> dict:
     token = credentials.credentials

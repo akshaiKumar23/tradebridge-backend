@@ -98,6 +98,16 @@ app.include_router(atlas_router)
 app.include_router(partners_router)
 
 
+@app.on_event("startup")
+def startup_event():
+    try:
+        table = get_onboarding_table()
+        table.load()
+        logger.info("DynamoDB connection pool warmed up successfully on startup.")
+    except Exception as e:
+        logger.warning(f"DynamoDB warm-up note: {e}")
+
+
 # ─── Pydantic Models ──────────────────────────────────────────────────────────
 
 class BrokerSelectRequest(BaseModel):
@@ -133,7 +143,7 @@ def decimal_to_float(obj):
 
 # ─── Dependencies ─────────────────────────────────────────────────────────────
 
-async def require_payment(current_user: dict = Depends(get_current_user)):
+def require_payment(current_user: dict = Depends(get_current_user)):
     table = get_onboarding_table()
     response = table.get_item(Key={"user_id": current_user["user_id"]})
     item = response.get("Item", {})
@@ -496,7 +506,7 @@ async def get_new_trades(current_user: dict = Depends(get_current_user)):
 # ─── Onboarding ───────────────────────────────────────────────────────────────
 
 @app.get("/onboarding/status")
-async def get_onboarding_status(current_user: dict = Depends(get_current_user)):
+def get_onboarding_status(current_user: dict = Depends(get_current_user)):
     table = get_onboarding_table()
     user_id = current_user["user_id"]
     email = current_user["email"]
@@ -547,7 +557,7 @@ async def get_onboarding_status(current_user: dict = Depends(get_current_user)):
 
 
 @app.post("/onboarding/user-details")
-async def submit_user_details(
+def submit_user_details(
     request: UserDetailsRequest,
     current_user: dict = Depends(get_current_user),
 ):
@@ -598,7 +608,7 @@ async def submit_user_details(
 
 
 @app.post("/onboarding/select-broker")
-async def select_broker(
+def select_broker(
     request: BrokerSelectRequest,
     current_user: dict = Depends(require_payment),
 ):
@@ -618,7 +628,7 @@ async def select_broker(
 
 
 @app.post("/onboarding/link-broker")
-async def link_broker(
+def link_broker(
     request: BrokerLinkRequest,
     current_user: dict = Depends(require_payment),
 ):
