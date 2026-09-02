@@ -116,6 +116,13 @@ class PaymentVerifyRequest(BaseModel):
     razorpay_signature: str
 
 
+class UserDetailsRequest(BaseModel):
+    fullName: str
+    phone: str
+    tradingExperience: str
+    tradingStyle: str
+
+
 # ─── Utilities ────────────────────────────────────────────────────────────────
 
 def decimal_to_float(obj):
@@ -503,16 +510,17 @@ async def get_onboarding_status(current_user: dict = Depends(get_current_user)):
         logger.info(f"onboarding/status: no item found for user_id={user_id}")
         if email:
             table.put_item(Item={
-                "user_id":       user_id,
-                "email":         email,
-                "has_paid":      False,
-                "broker_linked": False,
-                "created_at":    now,
-                "updated_at":    now,
+                "user_id":            user_id,
+                "email":              email,
+                "has_paid":           False,
+                "broker_linked":      False,
+                "profile_completed":  False,
+                "created_at":         now,
+                "updated_at":         now,
             })
             logger.info(
                 f"Created base record for {user_id} with email {email}")
-        return {"brokerLinked": False, "broker": None, "hasPaid": False}
+        return {"brokerLinked": False, "broker": None, "hasPaid": False, "profileCompleted": False}
 
     item = response["Item"]
     logger.info(
@@ -531,10 +539,62 @@ async def get_onboarding_status(current_user: dict = Depends(get_current_user)):
         logger.info(f"Backfilled email for user {user_id}")
 
     return {
-        "brokerLinked": item.get("broker_linked", False),
-        "broker":       item.get("broker_name"),
-        "hasPaid":      item.get("has_paid", False),
+        "brokerLinked":      item.get("broker_linked", False),
+        "broker":            item.get("broker_name"),
+        "hasPaid":           item.get("has_paid", False),
+        "profileCompleted":  item.get("profile_completed", False),
     }
+
+
+@app.post("/onboarding/user-details")
+async def submit_user_details(
+    request: UserDetailsRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    table = get_onboarding_table()
+    user_id = current_user["user_id"]
+    now = datetime.utcnow().isoformat()
+
+    # Check if a record already exists
+    existing = table.get_item(Key={"user_id": user_id})
+    item = existing.get("Item")
+
+    if item:
+        table.update_item(
+            Key={"user_id": user_id},
+            UpdateExpression="""
+                SET full_name          = :fn,
+                    phone              = :ph,
+                    trading_experience = :te,
+                    trading_style      = :ts,
+                    profile_completed  = :pc,
+                    updated_at         = :u
+            """,
+            ExpressionAttributeValues={
+                ":fn": request.fullName,
+                ":ph": request.phone,
+                ":te": request.tradingExperience,
+                ":ts": request.tradingStyle,
+                ":pc": True,
+                ":u":  now,
+            },
+        )
+    else:
+        table.put_item(Item={
+            "user_id":            user_id,
+            "full_name":          request.fullName,
+            "phone":              request.phone,
+            "trading_experience": request.tradingExperience,
+            "trading_style":      request.tradingStyle,
+            "profile_completed":  True,
+            "has_paid":           False,
+            "broker_linked":      False,
+            "created_at":         now,
+            "updated_at":         now,
+        })
+
+    logger.info(f"User details saved for {user_id}")
+    return {"status": "success"}
 
 
 @app.post("/onboarding/select-broker")
