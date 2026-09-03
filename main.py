@@ -130,7 +130,7 @@ class UserDetailsRequest(BaseModel):
     fullName: str
     phone: str
     tradingExperience: str
-    tradingStyle: str
+    broker: str
 
 
 # ─── Utilities ────────────────────────────────────────────────────────────────
@@ -550,7 +550,7 @@ def get_onboarding_status(current_user: dict = Depends(get_current_user)):
 
     return {
         "brokerLinked":      item.get("broker_linked", False),
-        "broker":            item.get("broker_name"),
+        "broker":            item.get("broker_name") or item.get("broker"),
         "hasPaid":           item.get("has_paid", False),
         "profileCompleted":  item.get("profile_completed", False),
     }
@@ -576,7 +576,7 @@ def submit_user_details(
                 SET full_name          = :fn,
                     phone              = :ph,
                     trading_experience = :te,
-                    trading_style      = :ts,
+                    profile_broker     = :pb,
                     profile_completed  = :pc,
                     updated_at         = :u
             """,
@@ -584,7 +584,7 @@ def submit_user_details(
                 ":fn": request.fullName,
                 ":ph": request.phone,
                 ":te": request.tradingExperience,
-                ":ts": request.tradingStyle,
+                ":pb": request.broker,
                 ":pc": True,
                 ":u":  now,
             },
@@ -595,7 +595,7 @@ def submit_user_details(
             "full_name":          request.fullName,
             "phone":              request.phone,
             "trading_experience": request.tradingExperience,
-            "trading_style":      request.tradingStyle,
+            "profile_broker":     request.broker,
             "profile_completed":  True,
             "has_paid":           False,
             "broker_linked":      False,
@@ -604,7 +604,10 @@ def submit_user_details(
         })
 
     logger.info(f"User details saved for {user_id}")
-    return {"status": "success"}
+    return {
+        "success": True,
+        "message": "User profile updated successfully"
+    }
 
 
 @app.post("/onboarding/select-broker")
