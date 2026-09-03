@@ -129,8 +129,8 @@ class PaymentVerifyRequest(BaseModel):
 class UserDetailsRequest(BaseModel):
     fullName: str
     phone: str
-    tradingExperience: str
     broker: str
+    tradingExperience: str | None = None
 
 
 # ─── Utilities ────────────────────────────────────────────────────────────────
@@ -569,39 +569,45 @@ def submit_user_details(
     existing = table.get_item(Key={"user_id": user_id})
     item = existing.get("Item")
 
+    update_expr = """
+        SET full_name          = :fn,
+            phone              = :ph,
+            profile_broker     = :pb,
+            profile_completed  = :pc,
+            updated_at         = :u
+    """
+    expr_attrs = {
+        ":fn": request.fullName,
+        ":ph": request.phone,
+        ":pb": request.broker,
+        ":pc": True,
+        ":u":  now,
+    }
+    if request.tradingExperience:
+        update_expr += ",\n            trading_experience = :te"
+        expr_attrs[":te"] = request.tradingExperience
+
     if item:
         table.update_item(
             Key={"user_id": user_id},
-            UpdateExpression="""
-                SET full_name          = :fn,
-                    phone              = :ph,
-                    trading_experience = :te,
-                    profile_broker     = :pb,
-                    profile_completed  = :pc,
-                    updated_at         = :u
-            """,
-            ExpressionAttributeValues={
-                ":fn": request.fullName,
-                ":ph": request.phone,
-                ":te": request.tradingExperience,
-                ":pb": request.broker,
-                ":pc": True,
-                ":u":  now,
-            },
+            UpdateExpression=update_expr,
+            ExpressionAttributeValues=expr_attrs,
         )
     else:
-        table.put_item(Item={
+        new_item = {
             "user_id":            user_id,
             "full_name":          request.fullName,
             "phone":              request.phone,
-            "trading_experience": request.tradingExperience,
             "profile_broker":     request.broker,
             "profile_completed":  True,
             "has_paid":           False,
             "broker_linked":      False,
             "created_at":         now,
             "updated_at":         now,
-        })
+        }
+        if request.tradingExperience:
+            new_item["trading_experience"] = request.tradingExperience
+        table.put_item(Item=new_item)
 
     logger.info(f"User details saved for {user_id}")
     return {
