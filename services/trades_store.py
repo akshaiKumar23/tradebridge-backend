@@ -11,22 +11,35 @@ MIN_VALID_TIMESTAMP = 1577836800
 def save_user_trades(user_id: str, trades: list):
     table = get_trades_table()
 
-    # Step 1: Delete all existing trades for this user
+    # Step 1: Delete all existing trades for this user.
+    # Must page through the whole partition -- a single query returns at most
+    # 1MB, so without this any trade past the first page survived the "delete"
+    # and got mixed into the next sync's results.
     try:
-        existing = table.query(
-            KeyConditionExpression=Key("user_id").eq(user_id),
-            ProjectionExpression="user_id, #ts",
-            ExpressionAttributeNames={"#ts": "timestamp"},
-        )
+        deleted_count = 0
+        query_kwargs = {
+            "KeyConditionExpression": Key("user_id").eq(user_id),
+            "ProjectionExpression": "user_id, #ts",
+            "ExpressionAttributeNames": {"#ts": "timestamp"},
+        }
 
         with table.batch_writer() as batch:
-            for item in existing.get("Items", []):
-                batch.delete_item(Key={
-                    "user_id": item["user_id"],
-                    "timestamp": item["timestamp"],
-                })
+            while True:
+                existing = table.query(**query_kwargs)
 
-        logger.info(f"Deleted {len(existing.get('Items', []))} existing trades for user_id={user_id}")
+                for item in existing.get("Items", []):
+                    batch.delete_item(Key={
+                        "user_id": item["user_id"],
+                        "timestamp": item["timestamp"],
+                    })
+                    deleted_count += 1
+
+                last_key = existing.get("LastEvaluatedKey")
+                if not last_key:
+                    break
+                query_kwargs["ExclusiveStartKey"] = last_key
+
+        logger.info(f"Deleted {deleted_count} existing trades for user_id={user_id}")
 
     except Exception as e:
         logger.error(f"Failed to delete existing trades for user_id={user_id}: {e}")
