@@ -1,7 +1,21 @@
-from celery_app import celery_app
+import redis
+from celery.exceptions import SoftTimeLimitExceeded
+from celery_app import celery_app, REDIS_URL
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from mt5_logic import fetch_mt5_analytics
+
+_redis = redis.Redis.from_url(REDIS_URL)
+
+# The MetaTrader5 package drives ONE desktop terminal through process-global
+# state -- initialize(), login() and shutdown() are not per-caller. Two syncs
+# running at once therefore log that shared terminal into two different broker
+# accounts and read each other's history, and whichever finishes first calls
+# shutdown() and tears the other's session out from under it. That is how a sync
+# ends up hanging. Serialise every MT5 session behind a single lock.
+MT5_LOCK_KEY = "mt5:terminal"
+MT5_LOCK_TTL = 30 * 60   # released early; this is only the crash safety net
+MT5_LOCK_WAIT = 60       # wait this long for the terminal before requeueing
 from services.mt5_normalizer import normalize_mt5_data
 from services.performance_store import save_user_performance_snapshot
 from services.analytics_store import save_user_analytics_stats
@@ -39,7 +53,36 @@ def get_account_summary(self, user_id, server, login, password, days=None):
     self.update_state(state="PROGRESS", meta={"step": "connecting_to_mt5"})
     print(f"Connecting with server={server}, login={login}, password=***")
 
-    result = fetch_mt5_analytics(server, login, password,days=days)
+    lock = _redis.lock(
+        MT5_LOCK_KEY,
+        timeout=MT5_LOCK_TTL,
+        blocking_timeout=MT5_LOCK_WAIT,
+    )
+
+    if not lock.acquire():
+        print("MT5 terminal busy with another sync - requeueing this one")
+        self.update_state(state="PROGRESS", meta={"step": "waiting_for_mt5_terminal"})
+        raise self.retry(countdown=30, max_retries=20)
+
+    def _report(done, total):
+        self.update_state(
+            state="PROGRESS",
+            meta={"step": "reading_mt5_history", "done": done, "total": total},
+        )
+
+    try:
+        result = fetch_mt5_analytics(
+            server, login, password, days=days, progress_cb=_report
+        )
+    except SoftTimeLimitExceeded:
+        print("Sync hit its time limit while reading MT5 - giving up cleanly")
+        raise
+    finally:
+        try:
+            lock.release()
+        except Exception as e:
+            print(f"MT5 lock already expired: {e}")
+
     if result["status"] == "success":
         print(f"✓ MT5 connected successfully")
     else:

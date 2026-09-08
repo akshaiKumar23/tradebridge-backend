@@ -16,7 +16,13 @@ DEFAULT_RISK_PCT = 0.01
 POSITION_LOOKBACK_DAYS = 365
 
 
-def fetch_mt5_analytics(server, login, password, days=None):
+def fetch_mt5_analytics(server, login, password, days=None, progress_cb=None):
+    """Pull closed-trade analytics from the MT5 terminal.
+
+    progress_cb, when given, is called as progress_cb(done, total) while
+    positions are processed so a long sync can report progress instead of
+    looking wedged.
+    """
 
     try:
 
@@ -137,7 +143,7 @@ def fetch_mt5_analytics(server, login, password, days=None):
         # different at 30 days than at 90 days. Re-fetch the complete deal set
         # for those (history_deals_get(position=...) ignores the time window).
 
-        back_filled = 0
+        back_filled = set()
 
         for position_id, position_deals in list(positions_map.items()):
 
@@ -153,10 +159,46 @@ def fetch_mt5_analytics(server, login, password, days=None):
                 positions_map[position_id] = sorted(
                     full_deals, key=lambda d: d.time
                 )
-                back_filled += 1
+                back_filled.add(position_id)
 
         if back_filled:
-            print(f"Back-filled {back_filled} positions opened before the window")
+            print(f"Back-filled {len(back_filled)} positions opened before the window")
+
+        # ---------------- ORDERS, FETCHED ONCE ----------------
+        # Stop losses used to be looked up with one history_orders_get() call per
+        # position. Every one of those is a blocking IPC round trip to the MT5
+        # terminal, so an account with thousands of trades spent most of the sync
+        # waiting on the terminal. Pull the whole order history in a single call
+        # and index it instead.
+
+        orders = mt5.history_orders_get(
+            int(fetch_start.timestamp()),
+            int(end_time.timestamp())
+        ) or []
+
+        orders_by_position = defaultdict(list)
+        for order in orders:
+            orders_by_position[order.position_id].append(order)
+
+        for pid in orders_by_position:
+            orders_by_position[pid].sort(
+                key=lambda o: getattr(o, "time_setup", 0)
+            )
+
+        print(f"Orders fetched: {len(orders)} in 1 call "
+              f"({len(orders_by_position)} positions indexed)")
+
+        # Positions recovered by the back-fill opened before the order window, so
+        # their orders are not in the bulk pull. This stays a per-position call,
+        # but only for that handful.
+        for position_id in back_filled:
+            if position_id in orders_by_position:
+                continue
+            recovered = mt5.history_orders_get(position=position_id) or []
+            if recovered:
+                orders_by_position[position_id] = sorted(
+                    recovered, key=lambda o: getattr(o, "time_setup", 0)
+                )
 
         # ---------------- ANALYTICS ----------------
 
@@ -168,7 +210,14 @@ def fetch_mt5_analytics(server, login, password, days=None):
 
         # ---------------- PROCESS EACH POSITION ----------------
 
+        total_positions = len(positions_map)
+        processed = 0
+
         for position_id, position_deals in positions_map.items():
+
+            processed += 1
+            if progress_cb and processed % 500 == 0:
+                progress_cb(processed, total_positions)
 
             entry_deal = None
             exit_deal = None
@@ -245,11 +294,8 @@ def fetch_mt5_analytics(server, login, password, days=None):
             # Risk from the stop loss, when the order carried one. Sorted so a
             # position with several orders always resolves to the same one.
             risk_amount = None
-            position_history = mt5.history_orders_get(position=position_id) or []
 
-            for order in sorted(
-                position_history, key=lambda o: getattr(o, "time_setup", 0)
-            ):
+            for order in orders_by_position.get(position_id, ()):
                 if getattr(order, "sl", 0) > 0 and entry_deal:
                     risk_amount = abs(
                         order.price_open - order.sl
