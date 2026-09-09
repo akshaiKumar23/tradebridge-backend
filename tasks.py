@@ -83,11 +83,22 @@ def get_account_summary(self, user_id, server, login, password, days=None):
         except Exception as e:
             print(f"MT5 lock already expired: {e}")
 
-    if result["status"] == "success":
-        print(f"✓ MT5 connected successfully")
-    else:
+    if result["status"] != "success":
+        # The terminal had not finished downloading this account's history. No
+        # store has run yet, so nothing has been overwritten and retrying is
+        # safe -- by the next attempt the download has normally landed.
+        if result.get("code") == "history_unavailable":
+            print(f"✗ {result['message']}")
+            print("  Nothing was written. Retrying once the history arrives.")
+            self.update_state(
+                state="PROGRESS", meta={"step": "waiting_for_mt5_history"}
+            )
+            raise self.retry(countdown=60, max_retries=3)
+
         print(f"✗ MT5 connection failed: {result}")
         return result
+
+    print(f"✓ MT5 connected successfully")
 
     # ---------------- STEP 2: Normalize Data ----------------
     print("\nSTEP 2: Normalizing data...")

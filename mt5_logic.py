@@ -15,6 +15,80 @@ DEFAULT_RISK_PCT = 0.01
 # are cut back to the requested window by *close* time afterwards.
 POSITION_LOOKBACK_DAYS = 365
 
+# MT5 pulls an account's deal history from the broker asynchronously after a
+# login, and history_deals_get() does not wait for it. Query straight after
+# connecting and the terminal answers 0 -- truthfully, because its local cache
+# really is empty at that instant. That is why a first sync recorded an empty
+# account and a second one, run against a cache the terminal had since filled,
+# returned everything.
+HISTORY_READY_TIMEOUT = 120      # longest to wait for the download
+HISTORY_EMPTY_GRACE = 15         # give up sooner when the account looks new
+HISTORY_POLL_INTERVAL = 0.5
+HISTORY_STABLE_POLLS = 2         # count must repeat this often to count as done
+
+# Deposits are themselves deals, so any funded account has history somewhere in
+# all time even when the reporting window is empty. Readiness is judged against
+# this range, never the reporting window.
+ALL_TIME_START = datetime(2000, 1, 1)
+
+
+def _deal_count(from_ts, to_ts):
+    """Cheap count of deals in a range, without materialising them."""
+    if hasattr(mt5, "history_deals_total"):
+        try:
+            total = mt5.history_deals_total(from_ts, to_ts)
+            if total is not None:
+                return int(total)
+        except Exception:
+            pass
+    try:
+        return len(mt5.history_deals_get(from_ts, to_ts) or [])
+    except Exception:
+        return 0
+
+
+def _wait_for_history(from_ts, to_ts, balance, reason):
+    """Block until the terminal has finished downloading the account history.
+
+    A download in progress reports a count that keeps climbing, so wait for the
+    number to repeat rather than merely be non-zero. An account with no deals
+    AND no balance is plausibly just new, so that case gives up early instead of
+    making every empty sync sit out the full timeout.
+    """
+    started = time.time()
+    deadline = started + HISTORY_READY_TIMEOUT
+    last_total = -1
+    stable = 0
+
+    while time.time() < deadline:
+        total = _deal_count(from_ts, to_ts)
+        waited = time.time() - started
+
+        if total > 0 and total == last_total:
+            stable += 1
+            if stable >= HISTORY_STABLE_POLLS:
+                print(f"History ready ({reason}): {total} deals after {waited:.1f}s")
+                return total
+        else:
+            stable = 0
+
+        if total == 0 and not balance and waited >= HISTORY_EMPTY_GRACE:
+            print(
+                f"No history and no balance after {waited:.1f}s ({reason}) - "
+                f"treating this as a genuinely new account"
+            )
+            return 0
+
+        last_total = total
+        time.sleep(HISTORY_POLL_INTERVAL)
+
+    print(
+        f"History still settling after {HISTORY_READY_TIMEOUT}s ({reason}) - "
+        f"proceeding with {max(last_total, 0)} deals"
+    )
+    return max(last_total, 0)
+
+
 
 def fetch_mt5_analytics(server, login, password, days=None, progress_cb=None):
     """Pull closed-trade analytics from the MT5 terminal.
@@ -38,6 +112,7 @@ def fetch_mt5_analytics(server, login, password, days=None, progress_cb=None):
                 }
 
         # Only login if not already on the right account
+        did_login = False
         account_info = mt5.account_info()
         if account_info is None or account_info.login != login:
             if not mt5.login(login=login, password=password, server=server):
@@ -46,6 +121,7 @@ def fetch_mt5_analytics(server, login, password, days=None, progress_cb=None):
                     "status": "error",
                     "message": f"MT5 login failed: {mt5.last_error()}"
                 }
+            did_login = True
 
         account = mt5.account_info()
 
@@ -112,16 +188,68 @@ def fetch_mt5_analytics(server, login, password, days=None, progress_cb=None):
             else start_time
         )
 
-        deals = mt5.history_deals_get(
-            int(fetch_start.timestamp()),
-            int(end_time.timestamp())
-        ) or []
+        fetch_from_ts = int(fetch_start.timestamp())
+        fetch_to_ts = int(end_time.timestamp())
+        all_time_from_ts = int(ALL_TIME_START.timestamp())
+
+        # A fresh login means the terminal is still pulling this account's
+        # history in the background. Without this wait the very next call reads
+        # an empty cache and the sync stores a zero-trade account.
+        if did_login:
+            _wait_for_history(
+                all_time_from_ts, fetch_to_ts, account.balance, "after login"
+            )
+
+        deals = mt5.history_deals_get(fetch_from_ts, fetch_to_ts) or []
         deals = sorted(deals, key=lambda d: d.time)
 
         print(f"\n=== FETCHING {'ALL TIME' if days is None else f'LAST {days} DAYS'} ===")
         print(f"Reporting window: {start_time.date()}  To: {end_time.date()}")
         print(f"Deals pulled from: {fetch_start.date()} (lookback for opening deals)")
         print(f"Total deals fetched: {len(deals)}")
+
+        # Safety net for the case this call did not log in -- the terminal was
+        # already on the account but had not finished syncing, e.g. it had just
+        # been restarted. A funded account with no deals anywhere in all time can
+        # only mean the history has not arrived: a deposit is itself a deal.
+        if (not deals and account.balance
+                and _deal_count(all_time_from_ts, fetch_to_ts) == 0):
+            print(
+                "0 deals but the account holds a balance - history has not "
+                "arrived yet, waiting for it"
+            )
+            _wait_for_history(
+                all_time_from_ts, fetch_to_ts, account.balance, "late arrival"
+            )
+            deals = sorted(
+                mt5.history_deals_get(fetch_from_ts, fetch_to_ts) or [],
+                key=lambda d: d.time,
+            )
+            print(f"Total deals fetched after waiting: {len(deals)}")
+
+        # Refuse to report an empty account we do not believe in.
+        #
+        # Deposits are deals, so an account holding money must have history. If
+        # the terminal still shows none after waiting for the download, the
+        # history is missing, not absent. Reporting success here would hand the
+        # stores an empty result and they would wipe and rewrite the user's real
+        # trades -- along with their tags, which cannot be re-fetched from MT5.
+        # Failing instead leaves every stored table untouched.
+        #
+        # A genuinely new account has no balance and no deals, and still returns
+        # success below, so first-time users are unaffected.
+        if not deals and account.balance:
+            message = (
+                f"Account {login} reports a balance of {account.balance} but the "
+                f"terminal returned no deal history. Refusing to overwrite stored "
+                f"trades with an empty result."
+            )
+            print(f"REFUSING TO SYNC: {message}")
+            return {
+                "status": "error",
+                "code": "history_unavailable",
+                "message": message,
+            }
 
         # ---------------- GROUP BY POSITION ----------------
 
@@ -171,10 +299,7 @@ def fetch_mt5_analytics(server, login, password, days=None, progress_cb=None):
         # waiting on the terminal. Pull the whole order history in a single call
         # and index it instead.
 
-        orders = mt5.history_orders_get(
-            int(fetch_start.timestamp()),
-            int(end_time.timestamp())
-        ) or []
+        orders = mt5.history_orders_get(fetch_from_ts, fetch_to_ts) or []
 
         orders_by_position = defaultdict(list)
         for order in orders:
