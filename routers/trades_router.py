@@ -83,8 +83,11 @@ async def get_trades(
 
         trade = {
             "trade_id": item.get("position_id"),
+            # close_time is the real close time; timestamp is the sort key and
+            # may have been nudged forward to keep trades in the same second
+            # distinct. Older rows predate close_time, hence the fallback.
             "date": datetime.fromtimestamp(
-                decimal_to_native(item["timestamp"])
+                decimal_to_native(item.get("close_time") or item["timestamp"])
             ).strftime("%Y-%m-%d"),
             "symbol": item.get("symbol"),
             "direction": item.get("direction"),
@@ -94,7 +97,7 @@ async def get_trades(
             "pnl": decimal_to_native(item.get("pnl", 0)),
             "r": decimal_to_native(item.get("r_multiple", 0)),
             "tags": resolved_tags,
-            "timestamp": decimal_to_native(item["timestamp"]),
+            "timestamp": decimal_to_native(item.get("close_time") or item["timestamp"]),
             "is_new": "unreviewed" in raw_tags,  
         }
 

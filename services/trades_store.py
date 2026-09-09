@@ -1,7 +1,7 @@
 from decimal import Decimal
 import logging
-from boto3.dynamodb.conditions import Key
 from db.dynamodb import get_trades_table
+from services import bulk
 
 logger = logging.getLogger(__name__)
 
@@ -11,51 +11,53 @@ MIN_VALID_TIMESTAMP = 1577836800
 def save_user_trades(user_id: str, trades: list):
     table = get_trades_table()
 
-    # Step 1: Delete all existing trades for this user.
-    # Must page through the whole partition -- a single query returns at most
-    # 1MB, so without this any trade past the first page survived the "delete"
-    # and got mixed into the next sync's results.
+    # Step 1: Read the existing partition once -- both to know which rows to
+    # clear and to carry the user's own tags across the rewrite. Tags are keyed
+    # by position_id because the timestamp can shift when duplicates are
+    # de-collided below, so it is not a stable handle.
     try:
-        deleted_count = 0
-        query_kwargs = {
-            "KeyConditionExpression": Key("user_id").eq(user_id),
-            "ProjectionExpression": "user_id, #ts",
-            "ExpressionAttributeNames": {"#ts": "timestamp"},
+        existing_keys, existing_items = bulk.collect_existing_keys(
+            table, user_id, "timestamp", extra_fields=["position_id", "tags"]
+        )
+
+        existing_tags = {
+            int(item["position_id"]): item["tags"]
+            for item in existing_items
+            if item.get("position_id") is not None and item.get("tags")
         }
 
-        with table.batch_writer() as batch:
-            while True:
-                existing = table.query(**query_kwargs)
-
-                for item in existing.get("Items", []):
-                    batch.delete_item(Key={
-                        "user_id": item["user_id"],
-                        "timestamp": item["timestamp"],
-                    })
-                    deleted_count += 1
-
-                last_key = existing.get("LastEvaluatedKey")
-                if not last_key:
-                    break
-                query_kwargs["ExclusiveStartKey"] = last_key
-
-        logger.info(f"Deleted {deleted_count} existing trades for user_id={user_id}")
-
     except Exception as e:
-        logger.error(f"Failed to delete existing trades for user_id={user_id}: {e}")
+        logger.error(f"Failed to read existing trades for user_id={user_id}: {e}")
         raise
 
-    # Step 2: If no new trades, stop here
+    # Step 2: If no new trades, clear the partition and stop -- same behaviour as
+    # the delete-first version this replaced.
     if not trades:
         logger.warning(f"No trades to save for user_id={user_id}")
+        bulk.delete_keys(table, existing_keys)
         return
 
-    # Step 3: Write the fresh trades
-    seen_timestamps = {}
-    saved_count = 0
+    # Step 3: Build the fresh rows.
+    #
+    # timestamp is the sort key, so every row needs a distinct one. Trades close
+    # in bursts within the same second, and the previous scheme counted
+    # collisions per original timestamp -- five trades at T became T..T+4, which
+    # then collided with the genuine trades at T+1 and T+2. Those duplicates used
+    # to overwrite each other silently, one update_item at a time, quietly losing
+    # trades; a batch write rejects them outright.
+    #
+    # Walk the trades in time order and hand out the next free second instead.
+    # That is unique by construction and keeps the original ordering.
+    ordered = sorted(
+        trades, key=lambda t: (int(t["timestamp"]), int(t["position_id"]))
+    )
+
+    last_assigned = None
+    items = []
+    shifted_count = 0
     skipped_invalid = 0
 
-    for trade in trades:
+    for trade in ordered:
         try:
             timestamp = int(trade["timestamp"])
             position_id = int(trade["position_id"])
@@ -68,54 +70,55 @@ def save_user_trades(user_id: str, trades: list):
                 skipped_invalid += 1
                 continue
 
-            if timestamp in seen_timestamps:
-                seen_timestamps[timestamp] += 1
-                timestamp = timestamp + seen_timestamps[timestamp]
-            else:
-                seen_timestamps[timestamp] = 0
+            # The real close time, kept as its own attribute so that shifting
+            # the sort key below can never move a trade onto the wrong day.
+            close_time = timestamp
 
-            table.update_item(
-                Key={
-                    "user_id": user_id,
-                    "timestamp": timestamp,
-                },
-                UpdateExpression="""
-                    SET position_id = :pid,
-                        symbol = :sym,
-                        direction = :dir,
-                        entry_price = :entry,
-                        exit_price = :exit,
-                        volume = :vol,
-                        pnl = :pnl,
-                        r_multiple = :r,
-                        risk_amount = :risk,
-                        tags = if_not_exists(tags, :default_tags)
-                """,
-                ExpressionAttributeValues={
-                    ":pid": position_id,
-                    ":sym": trade["symbol"],
-                    ":dir": trade.get("direction", "LONG"),
-                    ":entry": Decimal(str(
-                        trade.get("entry_price") or trade.get("entry") or 0
-                    )),
-                    ":exit": Decimal(str(
-                        trade.get("exit_price") or trade.get("exit") or 0
-                    )),
-                    ":vol": Decimal(str(trade["volume"])),
-                    ":pnl": Decimal(str(trade["pnl"])),
-                    ":r": Decimal(str(trade["r_multiple"])),
-                    ":risk": Decimal(str(trade["risk_amount"])),
-                    ":default_tags": ["unreviewed"],
-                }
-            )
-            saved_count += 1
+            if last_assigned is not None and timestamp <= last_assigned:
+                timestamp = last_assigned + 1
+                shifted_count += 1
+
+            last_assigned = timestamp
+
+            items.append({
+                "user_id": user_id,
+                "timestamp": timestamp,
+                "close_time": close_time,
+                "position_id": position_id,
+                "symbol": trade["symbol"],
+                "direction": trade.get("direction", "LONG"),
+                "entry_price": Decimal(str(
+                    trade.get("entry_price") or trade.get("entry") or 0
+                )),
+                "exit_price": Decimal(str(
+                    trade.get("exit_price") or trade.get("exit") or 0
+                )),
+                "volume": Decimal(str(trade["volume"])),
+                "pnl": Decimal(str(trade["pnl"])),
+                "r_multiple": Decimal(str(trade["r_multiple"])),
+                "risk_amount": Decimal(str(trade["risk_amount"])),
+                "tags": existing_tags.get(position_id, ["unreviewed"]),
+            })
 
         except Exception as e:
             logger.error(
                 f"Invalid trade data for user_id={user_id}, trade={trade}, error={e}"
             )
 
+    # Step 4: Rewrite the partition. Rows whose key is being overwritten are left
+    # in place rather than deleted and immediately rewritten; on a re-sync that
+    # is nearly all of them.
+    bulk.replace_partition(
+        table, "timestamp", existing_keys, items, label=f"trades user_id={user_id}"
+    )
+
     if skipped_invalid > 0:
         logger.warning(f"Skipped {skipped_invalid} trades with invalid timestamps for user_id={user_id}")
 
-    logger.info(f"Successfully saved {saved_count} trades for user_id={user_id}")
+    if shifted_count > 0:
+        logger.info(
+            f"Shifted {shifted_count} trades onto free timestamps for "
+            f"user_id={user_id} (trades closing within the same second)"
+        )
+
+    logger.info(f"Successfully saved {len(items)} trades for user_id={user_id}")
