@@ -21,13 +21,21 @@ from boto3.dynamodb.conditions import Key
 
 logger = logging.getLogger(__name__)
 
-# Items per batch_writer context. Each context flushes 25 at a time, so this is
-# how much serial work one thread takes on.
-CHUNK_SIZE = 500
+# How many items one thread takes on. This does NOT control the request size:
+# DynamoDB caps BatchWriteItem at 25 items, so the number of requests is always
+# ceil(len(items) / 25) no matter what this is set to. All it decides is how the
+# fixed work is divided between threads -- and since parallelism is capped at
+# min(MAX_WORKERS, number of chunks), raising it makes writes SLOWER by starving
+# the pool of chunks. Measured on 20k items at 20ms/request: 250 -> 2.0s,
+# 2500 -> 2.5s, 10000 -> 8.2s. Keep it small enough that there are comfortably
+# more chunks than workers.
+CHUNK_SIZE = 250
 
-# Kept deliberately modest: the sync already runs up to 12 store functions in
-# parallel, and every one of these threads borrows a boto3 pool connection.
-MAX_WORKERS = 4
+# The real throughput lever. Every thread here borrows a boto3 pool connection
+# (pool is 100) and the sync runs several of these stores concurrently, so this
+# is bounded by connection headroom and by how hard we want to burst DynamoDB
+# write capacity, not by anything in this module.
+MAX_WORKERS = 8
 
 
 def _chunk(seq, size):
